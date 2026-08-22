@@ -500,8 +500,10 @@
 
 @media screen and (max-width: 1000px) {
     #st-jets-modal {
-        /* 手机上往下挪：躲开状态栏 / 顶部导航，正文区从视觉重心开始 */
-        top: 15%;
+        /* 手机上往下挪：dvh 只按可见高度算，不被浏览器地址栏偷走偏移；
+           不认识 dvh 的老浏览器退回上一行的 22% */
+        top: 22%;
+        top: 20dvh;
         width: min(96vw, 720px);
         max-height: 76vh;
         padding: 14px;
