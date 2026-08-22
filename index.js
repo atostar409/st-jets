@@ -535,21 +535,19 @@ function getJetsSettings() {
         }
     }
 
-    // categories 语义：存「当前点亮的分类 id」——全量 = 全亮（含总控「全部」），空数组 = 一个没亮（搜不到任何东西）
+    // categories 语义：存「当前点亮的分类 id」；默认 = 一个不亮（想搜什么先点亮对应分类）
     const knownIds = new Set(ALL_CATEGORY_IDS);
     if (Array.isArray(settings.categories)) {
         settings.categories = settings.categories.filter(id => knownIds.has(id));
-        // 旧版（互斥逻辑）把空数组当「全部」：迁移成全量；新版里空数组是「全灭」
-        if (!settings.chipsMasterLogic) {
-            if (!settings.categories.length) {
-                settings.categories = [...ALL_CATEGORY_IDS];
-            }
-            settings.chipsMasterLogic = true;
+        // 一次性迁移到「默认全灭」：老版本默认全亮，或单选时代残留（比如永远只剩预设亮着），统一清空
+        if (!settings.chipsEmptyDefault) {
+            settings.categories = [];
+            settings.chipsEmptyDefault = true;
         }
     }
     else {
-        settings.categories = [...ALL_CATEGORY_IDS];
-        settings.chipsMasterLogic = true;
+        settings.categories = [];
+        settings.chipsEmptyDefault = true;
     }
 
     if (typeof settings.stripReasoning !== 'boolean') {
@@ -1987,10 +1985,10 @@ function renderResults(found, worldBookGroups = null, presetGroups = null) {
     if (!found.length && !worldBookGroups?.length && !presetGroups?.length) {
         const empty = document.createElement('div');
         empty.className = 'st-jets-empty';
-        empty.textContent = searchScope.length
-            ? `已挂载 ${searchScope.length} 项范围（${searchScope.slice(0, 2).map(entry => entry.name).join('、')}${searchScope.length > 2 ? ' 等' : ''}），输入关键词即在其中搜索`
-            : !getJetsSettings().categories.length
-                ? '没有点亮任何分类，点「全部」或具体分类开始搜索'
+        empty.textContent = !getJetsSettings().categories.length
+            ? '没有点亮任何分类，点「全部」或具体分类开始搜索'
+            : searchScope.length
+                ? `已挂载 ${searchScope.length} 项范围（${searchScope.slice(0, 2).map(entry => entry.name).join('、')}${searchScope.length > 2 ? ' 等' : ''}），输入关键词即在其中搜索`
                 : getEnabledPinnedTerms().length
                     ? '没有同时命中所有已启用关键词的结果'
                     : '没有找到结果';
