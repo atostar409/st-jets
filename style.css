@@ -17,6 +17,9 @@
     position: absolute;
     inset: 0;
     background: rgba(0, 0, 0, 0.45);
+    /* 面板外整体磨砂：视线聚焦弹窗，后面页面糊掉不抢注意力 */
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
     cursor: pointer;
     touch-action: none;
 }
@@ -497,9 +500,10 @@
 
 @media screen and (max-width: 1000px) {
     #st-jets-modal {
-        top: 8%;
+        /* 手机上往下挪：躲开状态栏 / 顶部导航，正文区从视觉重心开始 */
+        top: 15%;
         width: min(96vw, 720px);
-        max-height: 84vh;
+        max-height: 76vh;
         padding: 14px;
     }
 
