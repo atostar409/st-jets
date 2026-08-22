@@ -416,13 +416,11 @@ const TYPE_LABELS = {
     other: '其他',
 };
 
-// 搜索分类：chips 可多选，results 按 types 归属到分类
+// 搜索分类：「全部」是独立状态（选中时具体分类全灭，反之亦然）；角色与聊天本为一体，合并为一类
 const CATEGORIES = [
-    { id: 'character', label: '角色', types: ['character'] },
-    { id: 'chat', label: '聊天', types: ['chat', 'chat_message'] },
-    { id: 'worldinfo', label: '世界书', types: ['worldinfo'] },
-    { id: 'preset', label: '预设', types: ['preset'] },
-    { id: 'settings', label: '设置', types: ['settings', 'quickreply', 'regex'] },
+    { id: 'character', label: '角色/聊天', icon: 'fa-solid fa-user-group', color: '#7dd3fc', types: ['character', 'chat', 'chat_message'] },
+    { id: 'worldinfo', label: '世界书', icon: 'fa-solid fa-book-bookmark', color: '#c4b5fd', types: ['worldinfo'] },
+    { id: 'preset', label: '预设', icon: 'fa-solid fa-sliders', color: '#f9a8d4', types: ['preset'] },
 ];
 const ALL_CATEGORY_IDS = CATEGORIES.map(category => category.id);
 
@@ -536,15 +534,16 @@ function getJetsSettings() {
         }
     }
 
+    // categories 语义：空数组 = 「全部」；存具体 id = 只搜这些分类
     const knownIds = new Set(ALL_CATEGORY_IDS);
-    if (!Array.isArray(settings.categories) || !settings.categories.length) {
-        settings.categories = [...ALL_CATEGORY_IDS];
+    if (Array.isArray(settings.categories)) {
+        settings.categories = settings.categories.filter(id => knownIds.has(id));
+        if (settings.categories.length >= ALL_CATEGORY_IDS.length) {
+            settings.categories = [];
+        }
     }
     else {
-        settings.categories = settings.categories.filter(id => knownIds.has(id));
-        if (!settings.categories.length) {
-            settings.categories = [...ALL_CATEGORY_IDS];
-        }
+        settings.categories = [];
     }
 
     if (typeof settings.stripReasoning !== 'boolean') {
@@ -585,8 +584,8 @@ function saveJetsSettings() {
 
 function getActiveTypes() {
     const settings = getJetsSettings();
-    if (settings.categories.length >= ALL_CATEGORY_IDS.length) {
-        return null;
+    if (!settings.categories.length) {
+        return null; // 「全部」
     }
     const enabled = new Set(settings.categories);
     const types = new Set();
@@ -1225,7 +1224,7 @@ function ensureDom() {
     input = document.createElement('input');
     input.id = 'st-jets-input';
     input.type = 'text';
-    input.placeholder = '搜索角色 / 聊天 / 世界书 / 预设 / 设置…';
+    input.placeholder = '搜索角色 / 聊天 / 世界书 / 预设…';
     input.autocomplete = 'off';
     input.setAttribute('enterkeyhint', 'search');
 
@@ -1987,7 +1986,10 @@ function focusWorldEntry(entryIndex) {
 
 function isAuxiliaryInputTarget(target) {
     if (!target || typeof target.closest !== 'function') return false;
-    return !!(target.closest('#st-jets-settings') || target.id === 'st-jets-pin-input');
+    // 主搜索框除外：它需要方向键/回车导航结果
+    if (target.id === 'st-jets-input') return false;
+    // 弹窗内其他任何输入框（词条输入、设置面板等）不劫持按键
+    return !!(target.closest('#st-jets-pins') || target.closest('#st-jets-settings'));
 }
 
 function handleGlobalKeydown(event) {
@@ -2005,6 +2007,12 @@ function handleGlobalKeydown(event) {
             event.stopImmediatePropagation();
         }
         toggleJets();
+        return;
+    }
+
+    // 输入法组词中的按键（含确认候选词的回车）一律不当作快捷键，
+    // 否则中文输入法按回车确认文字会被误判为「打开选中结果」导致页面跳转
+    if (event.isComposing) {
         return;
     }
 
@@ -2051,20 +2059,31 @@ function handleGlobalKeydown(event) {
 
 // ===== 分类 / 常驻词条 chips 与设置面板 =====
 
-function createChip({ label, active = false, title = '', onClick }) {
+function createChip({ label, icon = '', color = '', active = false, title = '', onClick }) {
     const chip = document.createElement('div');
     chip.className = 'st-jets-chip' + (active ? ' is-active' : '');
+    if (color) {
+        chip.style.setProperty('--st-jets-chip-color', color);
+    }
     if (title) {
         chip.title = title;
     }
     chip.setAttribute('role', 'button');
     chip.tabIndex = 0;
-    chip.textContent = label;
+    if (icon) {
+        const chipIcon = document.createElement('i');
+        chipIcon.className = icon;
+        chip.appendChild(chipIcon);
+    }
+    const text = document.createElement('span');
+    text.textContent = label;
+    chip.appendChild(text);
     chip.addEventListener('click', event => {
         event.stopPropagation();
         onClick?.();
     });
     chip.addEventListener('keydown', event => {
+        if (event.isComposing) return;
         if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
             event.stopPropagation();
@@ -2076,7 +2095,9 @@ function createChip({ label, active = false, title = '', onClick }) {
 
 function setCategories(ids) {
     const settings = getJetsSettings();
-    settings.categories = ids.length ? ids : [...ALL_CATEGORY_IDS];
+    const known = ALL_CATEGORY_IDS.filter(id => ids.includes(id));
+    // 全选等价于「全部」，存成空数组；一个不剩也回落到「全部」
+    settings.categories = known.length && known.length < ALL_CATEGORY_IDS.length ? known : [];
     saveJetsSettings();
     renderCategoryChips();
     rerunSearchIfOpen();
@@ -2089,23 +2110,27 @@ function renderCategoryChips() {
 
     const settings = getJetsSettings();
     const enabled = new Set(settings.categories);
+    const isAll = settings.categories.length === 0;
 
     row.appendChild(createChip({
         label: '全部',
-        active: enabled.size >= ALL_CATEGORY_IDS.length,
-        title: '搜索所有分类',
-        onClick: () => setCategories([...ALL_CATEGORY_IDS]),
+        icon: 'fa-solid fa-layer-group',
+        active: isAll,
+        title: '搜索全部内容',
+        onClick: () => setCategories([]),
     }));
 
     for (const category of CATEGORIES) {
+        const active = enabled.has(category.id);
         row.appendChild(createChip({
             label: category.label,
-            active: enabled.has(category.id),
-            title: enabled.has(category.id) ? `点击排除「${category.label}」` : `点击只加入「${category.label}」`,
+            icon: category.icon,
+            color: category.color,
+            active,
+            title: active ? `已选中「${category.label}」，点击取消` : `筛选${category.label}（可与其他分类叠加）`,
             onClick: () => {
                 const next = new Set(enabled);
                 if (next.has(category.id)) {
-                    if (next.size <= 1) return; // 至少保留一个分类
                     next.delete(category.id);
                 } else {
                     next.add(category.id);
@@ -2119,6 +2144,8 @@ function renderCategoryChips() {
 function renderPinChips() {
     const row = document.getElementById('st-jets-pins');
     if (!row) return;
+    // 重绘会清空整行；如果词条输入框正开着（连续添加中），重绘后恢复它
+    const reopenPinInput = row.querySelector('#st-jets-pin-input') !== null;
     row.innerHTML = '';
 
     const label = document.createElement('span');
@@ -2183,6 +2210,10 @@ function renderPinChips() {
         }
     });
     row.appendChild(addChip);
+
+    if (reopenPinInput) {
+        showPinInput(row, addChip);
+    }
 }
 
 function showPinInput(row, addChip) {
@@ -2192,7 +2223,7 @@ function showPinInput(row, addChip) {
     const pinInput = document.createElement('input');
     pinInput.id = 'st-jets-pin-input';
     pinInput.type = 'text';
-    pinInput.placeholder = '输入词条，回车添加';
+    pinInput.placeholder = '关键词，回车添加';
     pinInput.maxLength = 24;
     pinInput.autocomplete = 'off';
 
@@ -2203,23 +2234,26 @@ function showPinInput(row, addChip) {
         pinInput.remove();
         addChip.classList.remove('is-hidden');
     };
-    const commit = () => {
-        const value = pinInput.value.trim();
-        cleanup();
-        if (value) {
-            addPinnedTerm(value);
-        }
-    };
 
     pinInput.addEventListener('keydown', event => {
+        event.stopPropagation();
+        // 输入法组词中的回车是确认候选词，不是提交
+        if (event.isComposing) return;
         if (event.key === 'Enter') {
             event.preventDefault();
-            commit();
+            const value = pinInput.value.trim();
+            if (value) {
+                // 添加后输入框重开，可连续录入多个关键词；焦点不会掉到页面上
+                pinInput.value = '';
+                addPinnedTerm(value);
+            }
+            else {
+                cleanup();
+            }
         } else if (event.key === 'Escape') {
             event.preventDefault();
             cleanup();
         }
-        event.stopPropagation();
     });
     pinInput.addEventListener('blur', cleanup);
 
@@ -2246,7 +2280,11 @@ function buildSettingsPanel() {
     const panel = document.createElement('div');
     panel.id = 'st-jets-settings';
 
-    // 思维链过滤开关
+    // —— 内容屏蔽 ——
+    const blockTitle = document.createElement('div');
+    blockTitle.className = 'st-jets-settings-title';
+    blockTitle.textContent = '内容屏蔽（不进入搜索结果）';
+
     const reasoningRow = document.createElement('div');
     reasoningRow.className = 'st-jets-settings-row';
     const reasoningLabel = document.createElement('label');
@@ -2255,7 +2293,7 @@ function buildSettingsPanel() {
     reasoningCheckbox.type = 'checkbox';
     reasoningCheckbox.id = 'st-jets-reasoning-toggle';
     const reasoningText = document.createElement('span');
-    reasoningText.textContent = '过滤思维链（不索引 <think>、<thinking> 等推理内容）';
+    reasoningText.textContent = '屏蔽思维链 / XML 标签（如 <think>…</think> 的推理内容）';
     reasoningLabel.appendChild(reasoningCheckbox);
     reasoningLabel.appendChild(reasoningText);
     reasoningRow.appendChild(reasoningLabel);
@@ -2266,18 +2304,26 @@ function buildSettingsPanel() {
         rebuildChatItemsFromCache();
     });
 
-    // 自定义过滤标签
+    // 自定义过滤标签：紧跟开关、缩进展示，一眼看出是在这里填
     const tagsRow = document.createElement('div');
-    tagsRow.className = 'st-jets-settings-row';
+    tagsRow.className = 'st-jets-settings-row st-jets-settings-subrow';
     const tagsLabel = document.createElement('span');
     tagsLabel.className = 'st-jets-settings-label';
-    tagsLabel.textContent = '过滤标签';
+    tagsLabel.textContent = '屏蔽的标签：';
     const tagsList = document.createElement('div');
     tagsList.id = 'st-jets-reasoning-tags';
     tagsRow.appendChild(tagsLabel);
     tagsRow.appendChild(tagsList);
 
-    // 索引状态与重建
+    const tagsHint = document.createElement('div');
+    tagsHint.className = 'st-jets-settings-hint';
+    tagsHint.textContent = '模型输出的其他标签（如 <dream>）在这里补一个名字，点 × 可移除；改动立即生效。';
+
+    // —— 索引 ——
+    const indexTitle = document.createElement('div');
+    indexTitle.className = 'st-jets-settings-title';
+    indexTitle.textContent = '索引';
+
     const indexRow = document.createElement('div');
     indexRow.className = 'st-jets-settings-row';
     const status = document.createElement('span');
@@ -2306,8 +2352,11 @@ function buildSettingsPanel() {
     hint.className = 'st-jets-settings-hint';
     hint.textContent = '首次使用会在后台空闲时逐步索引全部聊天；AI 生成回复期间自动暂停，不影响酒馆性能。';
 
+    panel.appendChild(blockTitle);
     panel.appendChild(reasoningRow);
     panel.appendChild(tagsRow);
+    panel.appendChild(tagsHint);
+    panel.appendChild(indexTitle);
     panel.appendChild(indexRow);
     panel.appendChild(hint);
     return panel;
@@ -2378,10 +2427,12 @@ function renderReasoningTagChips() {
     const tagInput = document.createElement('input');
     tagInput.id = 'st-jets-tag-input';
     tagInput.type = 'text';
-    tagInput.placeholder = '添加标签';
+    tagInput.placeholder = '输入标签名（如 dream），回车添加';
     tagInput.maxLength = 20;
     tagInput.autocomplete = 'off';
     tagInput.addEventListener('keydown', event => {
+        event.stopPropagation();
+        if (event.isComposing) return;
         if (event.key === 'Enter') {
             event.preventDefault();
             const value = tagInput.value.trim();
@@ -2390,7 +2441,6 @@ function renderReasoningTagChips() {
                 tagInput.value = '';
             }
         }
-        event.stopPropagation();
     });
     list.appendChild(tagInput);
 }

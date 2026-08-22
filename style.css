@@ -217,7 +217,7 @@
     flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
     height: 28px;
     padding: 0 12px;
     border-radius: 999px;
@@ -233,14 +233,25 @@
     transition: opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
+.st-jets-chip i {
+    font-size: 11px;
+    opacity: 0.9;
+}
+
 .st-jets-chip:hover {
     opacity: 0.9;
 }
 
+/* 点亮态：未设 --st-jets-chip-color 时为中性白（如「全部」），
+   设了则为该分类专属色（JS 注入），一眼区分不同分类 */
 .st-jets-chip.is-active {
     opacity: 1;
-    background: rgba(255, 255, 255, 0.12);
-    border-color: rgba(255, 255, 255, 0.35);
+    font-weight: 600;
+    color: var(--st-jets-chip-color, inherit);
+    border-color: var(--st-jets-chip-color, rgba(255, 255, 255, 0.45));
+    background: rgba(255, 255, 255, 0.14);
+    background: color-mix(in srgb, var(--st-jets-chip-color, #ffffff) 16%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--st-jets-chip-color, #ffffff) 22%, transparent);
 }
 
 /* 常驻词条：启用时青色高亮（与结果中的关键词高亮同色），停用时暗淡 */
@@ -347,6 +358,17 @@
     font-size: 13px;
 }
 
+.st-jets-settings-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    opacity: 0.55;
+}
+
+.st-jets-settings-subrow {
+    padding-left: 23px; /* 对齐上方开关的文字起点 */
+}
+
 .st-jets-settings-label {
     flex: 0 0 auto;
     font-size: 12px;
@@ -376,7 +398,7 @@
 }
 
 #st-jets-tag-input {
-    width: 90px;
+    width: 200px;
     height: 26px;
     padding: 0 10px;
     border-radius: 999px;
