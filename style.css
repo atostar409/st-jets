@@ -684,3 +684,47 @@
     border: 1px solid rgba(52, 211, 153, 0.4);
     user-select: none;
 }
+
+/* ===== 世界书两级搜索：书级行 / 挂载范围 / 书内小节 ===== */
+
+.st-jets-group-hint {
+    margin-left: 8px;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
+    opacity: 0.85;
+}
+
+.st-jets-book-row .st-jets-result-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+/* 命中数徽标：世界书分类同色（紫） */
+.st-jets-book-count {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: #c4b5fd;
+    background: rgba(196, 181, 253, 0.12);
+    border: 1px solid rgba(196, 181, 253, 0.35);
+    user-select: none;
+}
+
+.st-jets-book-preview {
+    opacity: 0.65;
+}
+
+.st-jets-subheader {
+    font-size: 12px;
+    opacity: 0.65;
+    margin: 8px 6px 2px;
+    user-select: none;
+}

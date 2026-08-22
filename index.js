@@ -623,6 +623,74 @@ function getEnabledPinnedTerms() {
     return getPinnedTerms().filter(term => term.enabled).map(term => term.text);
 }
 
+// ===== 世界书挂载范围（两级搜索）=====
+// 一本世界书动辄上千条目、一个人几十本书，逐条平铺必乱。
+// 未挂书：条目命中聚合成「一本书一行」，点书名挂载；
+// 挂了书：搜索只指向挂载书的条目，× 移除恢复全书搜索。会话级状态，不持久化。
+const worldScope = new Set();
+const WORLDINFO_ONLY_TYPES = new Set(['worldinfo']);
+
+function mountWorldBook(name) {
+    const bookName = String(name || '').trim();
+    if (!bookName) return;
+    worldScope.add(bookName);
+    renderWorldScopeChips();
+    rerunSearchIfOpen();
+}
+
+function unmountWorldBook(name) {
+    if (worldScope.delete(String(name || ''))) {
+        renderWorldScopeChips();
+        rerunSearchIfOpen();
+    }
+}
+
+function getIndexedWorldBookNames() {
+    const names = new Set();
+    for (const item of searcher.items) {
+        if (item?.type === 'worldinfo' && item?.metadata?.bookName) {
+            names.add(item.metadata.bookName);
+        }
+    }
+    return names;
+}
+
+// 把条目级命中按书聚合：命中数、最高分、前几条目目做预览；书名直接命中的书也列出
+function aggregateWorldBooks(entryResults, query) {
+    const groups = new Map();
+    for (const result of entryResults) {
+        const name = result.item?.metadata?.bookName || '（未命名）';
+        if (!groups.has(name)) {
+            groups.set(name, { name, results: [], bestScore: 0, nameMatch: false });
+        }
+        const group = groups.get(name);
+        group.results.push(result);
+        group.bestScore = Math.max(group.bestScore, result.score || 0);
+    }
+
+    const normalizedQuery = String(query || '').trim().toLowerCase();
+    if (normalizedQuery) {
+        for (const name of getIndexedWorldBookNames()) {
+            if (name.toLowerCase().includes(normalizedQuery)) {
+                if (groups.has(name)) {
+                    groups.get(name).nameMatch = true;
+                } else {
+                    groups.set(name, { name, results: [], bestScore: 0, nameMatch: true });
+                }
+            }
+        }
+    }
+
+    const list = [...groups.values()];
+    list.sort((a, b) => {
+        if (a.nameMatch !== b.nameMatch) return a.nameMatch ? -1 : 1;
+        if (b.results.length !== a.results.length) return b.results.length - a.results.length;
+        if (b.bestScore !== a.bestScore) return b.bestScore - a.bestScore;
+        return a.name.localeCompare(b.name);
+    });
+    return list;
+}
+
 function addPinnedTerm(text) {
     const value = String(text || '').trim().slice(0, 24);
     if (!value) return;
@@ -1409,11 +1477,18 @@ function ensureDom() {
     categoriesRow.id = 'st-jets-categories';
     categoriesRow.className = 'st-jets-chip-row';
 
+    // 世界书挂载范围行：没挂书时整行隐藏，挂了才出现（渐进披露，不占常驻空间）
+    const scopeRow = document.createElement('div');
+    scopeRow.id = 'st-jets-scope';
+    scopeRow.className = 'st-jets-chip-row';
+    scopeRow.hidden = true;
+
     const pinsRow = document.createElement('div');
     pinsRow.id = 'st-jets-pins';
     pinsRow.className = 'st-jets-chip-row';
 
     toolbar.appendChild(categoriesRow);
+    toolbar.appendChild(scopeRow);
     toolbar.appendChild(pinsRow);
 
     const settingsPanel = buildSettingsPanel();
@@ -1430,6 +1505,7 @@ function ensureDom() {
     container.appendChild(modal);
     document.body.appendChild(container);
     applyJetsTheme();
+    renderWorldScopeChips();
 
     overlay.addEventListener('click', closeJets);
     overlay.addEventListener('pointerdown', event => {
@@ -1536,7 +1612,7 @@ function handleSearchInput() {
         clearTimeout(searchTimer);
     }
     const query = input.value.trim();
-    if (!query && !getEnabledPinnedTerms().length) {
+    if (!query && !getEnabledPinnedTerms().length && !worldScope.size) {
         clearResults();
         hideResults();
         return;
@@ -1556,7 +1632,7 @@ function runSearch() {
     activePresetSnapshot = snapshotActivePresets();
     const query = input.value.trim();
     const pins = getEnabledPinnedTerms();
-    if (!query && !pins.length) {
+    if (!query && !pins.length && !worldScope.size) {
         clearResults();
         hideResults();
         return;
@@ -1566,16 +1642,36 @@ function runSearch() {
         searcher.addBatch([...STATIC_ITEMS]);
     }
 
-    const filters = { types: getActiveTypes(), requiredTerms: pins };
-    let found = searcher.search(query, filters);
-    if (!found.length && query.length <= 1) {
-        const typeSet = filters.types;
+    const activeTypes = getActiveTypes();
+    const worldinfoActive = !activeTypes || activeTypes.has('worldinfo');
+    const scoped = worldScope.size > 0;
+
+    // 世界书两级搜索：主搜索用预过滤把世界书条目摘出去单独处理。
+    // 未挂书 → 聚合成书级行；挂了书 → 只放行挂载书的条目，其余类型不受影响
+    const itemFilter = scoped
+        ? item => item.type !== 'worldinfo' || worldScope.has(item?.metadata?.bookName || '')
+        : item => item.type !== 'worldinfo';
+    let found = searcher.search(query, { types: activeTypes, requiredTerms: pins, filter: itemFilter });
+
+    let worldBookGroups = null;
+    if (worldinfoActive && !scoped) {
+        // 不设上限：命中数要按书完整统计，被 maxResults 截断就数错了
+        const entryResults = searcher.search(query, {
+            types: WORLDINFO_ONLY_TYPES,
+            requiredTerms: pins,
+            maxResults: Infinity,
+        });
+        worldBookGroups = aggregateWorldBooks(entryResults, query);
+    }
+
+    if (!found.length && !worldBookGroups?.length && query.length <= 1 && !scoped) {
+        const typeSet = activeTypes;
         const fallbackItems = [...STATIC_ITEMS]
             .filter(item => !typeSet || typeSet.has(item.type));
         const limit = searcher.options?.maxResults || 50;
         found = fallbackItems.slice(0, limit).map(item => ({ item, score: 0, matches: [] }));
     }
-    renderResults(found);
+    renderResults(found, worldBookGroups);
     showResults();
 }
 
@@ -1743,17 +1839,21 @@ function appendHighlightedText(container, text, ranges, { prefix = '', suffix = 
     if (suffix) container.appendChild(document.createTextNode(suffix));
 }
 
-function renderResults(found) {
+function renderResults(found, worldBookGroups = null) {
     clearResults();
 
-    if (!found.length) {
+    if (!found.length && !worldBookGroups?.length) {
         const empty = document.createElement('div');
         empty.className = 'st-jets-empty';
-        empty.textContent = !getJetsSettings().categories.length
-            ? '没有点亮任何分类，点「全部」或具体分类开始搜索'
-            : getEnabledPinnedTerms().length
-                ? '没有同时命中所有已启用关键词的结果'
-                : '没有找到结果';
+        empty.textContent = worldScope.size
+            ? (worldScope.size === 1
+                ? `已挂载《${[...worldScope][0]}》，输入关键词即只搜这本书的条目`
+                : `已挂载 ${worldScope.size} 本世界书，输入关键词即在这些书内搜索`)
+            : !getJetsSettings().categories.length
+                ? '没有点亮任何分类，点「全部」或具体分类开始搜索'
+                : getEnabledPinnedTerms().length
+                    ? '没有同时命中所有已启用关键词的结果'
+                    : '没有找到结果';
         results.appendChild(empty);
         return;
     }
@@ -1767,103 +1867,218 @@ function renderResults(found) {
         grouped.get(type).push(result);
     }
 
-    const order = ['character', 'chat', 'chat_message', 'worldinfo', 'preset', 'settings', 'quickreply', 'regex', 'other'];
+    const order = ['character', 'chat', 'chat_message', 'worldinfo_book', 'worldinfo', 'preset', 'settings', 'quickreply', 'regex', 'other'];
     for (const type of order) {
-        if (!grouped.has(type)) continue;
+        const isBookGroup = type === 'worldinfo_book';
+        if (isBookGroup ? !(worldBookGroups && worldBookGroups.length) : !grouped.has(type)) {
+            continue;
+        }
+
         const header = document.createElement('div');
         header.className = 'st-jets-group-header';
-        header.textContent = TYPE_LABELS[type] || type;
+        if (isBookGroup) {
+            header.textContent = TYPE_LABELS.worldinfo;
+            const hint = document.createElement('span');
+            hint.className = 'st-jets-group-hint';
+            hint.textContent = '点书名挂载 · 挂载后只搜该书条目';
+            header.appendChild(hint);
+        } else if (type === 'worldinfo' && worldScope.size === 1) {
+            header.textContent = `世界书 ·《${[...worldScope][0]}》`;
+        } else {
+            header.textContent = TYPE_LABELS[type] || type;
+        }
         results.appendChild(header);
 
+        if (isBookGroup) {
+            appendWorldBookRows(worldBookGroups);
+            continue;
+        }
+        if (type === 'worldinfo' && worldScope.size > 1) {
+            appendScopedWorldEntries(grouped.get(type));
+            continue;
+        }
         for (const result of grouped.get(type)) {
-            const item = result.item;
-            const row = document.createElement('div');
-            row.className = 'st-jets-result-item';
-            row.dataset.type = item.type || 'other';
-            row.dataset.id = item.id || '';
-
-            if (item?.metadata?.entryIndex !== undefined) {
-                const entrySelector = `.world_entry[uid="${item.metadata.entryIndex}"]`;
-                if (document.querySelector(entrySelector)) {
-                    row.dataset.entryIndex = String(item.metadata.entryIndex);
-                }
-            }
-
-            const title = document.createElement('div');
-            title.className = 'st-jets-result-title';
-            const titleText = item.title || 'Untitled';
-            const titleRanges = normalizeRanges(
-                (result.matches || []).filter(match => match.field === 'title'),
-                titleText.length,
-            );
-            if (titleRanges.length) {
-                appendHighlightedText(title, titleText, titleRanges);
-            } else {
-                title.textContent = titleText;
-            }
-            if (isActivePresetItem(item)) {
-                const badge = document.createElement('span');
-                badge.className = 'st-jets-active-badge';
-                badge.textContent = '使用中';
-                title.appendChild(badge);
-            }
-
-            const subtitle = document.createElement('div');
-            subtitle.className = 'st-jets-result-subtitle';
-            const contentText = item.content || '';
-            const contentRanges = (result.matches || []).filter(match => match.field === 'content');
-            const snippets = buildSnippets(contentText, contentRanges);
-            const snippetItems = snippets.length ? snippets : [buildSingleSnippet(contentText, [])];
-            const snippetList = document.createElement('div');
-            snippetList.className = 'st-jets-snippet-list';
-
-            const applyExpandedState = expanded => {
-                snippetList.dataset.expanded = expanded ? 'true' : 'false';
-                const hidden = snippetList.querySelectorAll('.st-jets-snippet');
-                hidden.forEach((node, index) => {
-                    if (index >= MAX_SNIPPETS) {
-                        node.classList.toggle('is-hidden', !expanded);
-                    }
-                });
-            };
-
-            snippetItems.forEach((snippet, index) => {
-                const line = document.createElement('div');
-                line.className = 'st-jets-snippet';
-                if (index >= MAX_SNIPPETS) {
-                    line.classList.add('is-hidden');
-                }
-                appendHighlightedText(line, snippet.snippet, snippet.ranges, {
-                    prefix: snippet.prefix,
-                    suffix: snippet.suffix,
-                });
-                snippetList.appendChild(line);
-            });
-
-            if (snippetItems.length > MAX_SNIPPETS) {
-                const toggle = document.createElement('div');
-                toggle.className = 'st-jets-snippet-toggle';
-                toggle.textContent = '展开更多';
-                toggle.addEventListener('click', event => {
-                    event.stopPropagation();
-                    const expanded = snippetList.dataset.expanded !== 'true';
-                    applyExpandedState(expanded);
-                    toggle.textContent = expanded ? '收起' : '展开更多';
-                });
-                snippetList.appendChild(toggle);
-                applyExpandedState(false);
-            }
-
-            subtitle.appendChild(snippetList);
-
-            row.appendChild(title);
-            row.appendChild(subtitle);
-            row.addEventListener('click', () => void executeResult(result));
-
-            results.appendChild(row);
-            currentResults.push({ result, element: row });
+            appendResultRow(result);
         }
     }
+}
+
+// 书级行：一本一行，命中数徽标 + 前几条目目预览；点击 = 挂载（不跳转、不关弹窗）
+function appendWorldBookRows(groups) {
+    const limit = 50;
+    for (const group of groups.slice(0, limit)) {
+        const pseudoResult = {
+            item: {
+                id: `worldbook-${group.name}`,
+                type: 'worldinfo_book',
+                title: group.name,
+                content: '',
+                metadata: { bookName: group.name },
+            },
+            score: group.bestScore,
+            matches: [],
+        };
+
+        const row = document.createElement('div');
+        row.className = 'st-jets-result-item st-jets-book-row';
+        row.dataset.type = 'worldinfo_book';
+
+        const title = document.createElement('div');
+        title.className = 'st-jets-result-title';
+        const name = document.createElement('span');
+        name.className = 'st-jets-book-name';
+        name.textContent = group.name;
+        title.appendChild(name);
+
+        const badge = document.createElement('span');
+        badge.className = 'st-jets-book-count';
+        badge.textContent = group.nameMatch && !group.results.length
+            ? '书名匹配'
+            : `${group.results.length} 条命中`;
+        title.appendChild(badge);
+
+        const subtitle = document.createElement('div');
+        subtitle.className = 'st-jets-result-subtitle st-jets-book-preview';
+        if (group.results.length) {
+            const preview = group.results
+                .slice(0, 3)
+                .map(result => result.item?.title || '')
+                .filter(Boolean)
+                .join(' · ');
+            subtitle.textContent = group.results.length > 3 ? `含 ${preview} 等` : `含 ${preview}`;
+        } else {
+            subtitle.textContent = '挂载后在书内搜索任意内容';
+        }
+
+        row.appendChild(title);
+        row.appendChild(subtitle);
+        row.addEventListener('click', () => mountWorldBook(group.name));
+
+        results.appendChild(row);
+        currentResults.push({ result: pseudoResult, element: row });
+    }
+}
+
+// 多本挂载时按书分小节（书序 = 挂载顺序），节内保持分数排序
+function appendScopedWorldEntries(resultList) {
+    const byBook = new Map();
+    for (const name of worldScope) {
+        byBook.set(name, []);
+    }
+    const orphans = [];
+    for (const result of resultList) {
+        const name = result.item?.metadata?.bookName || '';
+        if (byBook.has(name)) {
+            byBook.get(name).push(result);
+        } else {
+            orphans.push(result);
+        }
+    }
+    const sections = [...worldScope].map(name => ({ name, list: byBook.get(name) }));
+    if (orphans.length) {
+        sections.push({ name: '', list: orphans });
+    }
+    for (const section of sections) {
+        if (!section.list.length) continue;
+        if (section.name) {
+            const subheader = document.createElement('div');
+            subheader.className = 'st-jets-subheader';
+            subheader.textContent = `《${section.name}》 · ${section.list.length} 条`;
+            results.appendChild(subheader);
+        }
+        for (const result of section.list) {
+            appendResultRow(result);
+        }
+    }
+}
+
+function appendResultRow(result) {
+    const item = result.item;
+    const row = document.createElement('div');
+    row.className = 'st-jets-result-item';
+    row.dataset.type = item.type || 'other';
+    row.dataset.id = item.id || '';
+
+    if (item?.metadata?.entryIndex !== undefined) {
+        const entrySelector = `.world_entry[uid="${item.metadata.entryIndex}"]`;
+        if (document.querySelector(entrySelector)) {
+            row.dataset.entryIndex = String(item.metadata.entryIndex);
+        }
+    }
+
+    const title = document.createElement('div');
+    title.className = 'st-jets-result-title';
+    const titleText = item.title || 'Untitled';
+    const titleRanges = normalizeRanges(
+        (result.matches || []).filter(match => match.field === 'title'),
+        titleText.length,
+    );
+    if (titleRanges.length) {
+        appendHighlightedText(title, titleText, titleRanges);
+    } else {
+        title.textContent = titleText;
+    }
+    if (isActivePresetItem(item)) {
+        const badge = document.createElement('span');
+        badge.className = 'st-jets-active-badge';
+        badge.textContent = '使用中';
+        title.appendChild(badge);
+    }
+
+    const subtitle = document.createElement('div');
+    subtitle.className = 'st-jets-result-subtitle';
+    const contentText = item.content || '';
+    const contentRanges = (result.matches || []).filter(match => match.field === 'content');
+    const snippets = buildSnippets(contentText, contentRanges);
+    const snippetItems = snippets.length ? snippets : [buildSingleSnippet(contentText, [])];
+    const snippetList = document.createElement('div');
+    snippetList.className = 'st-jets-snippet-list';
+
+    const applyExpandedState = expanded => {
+        snippetList.dataset.expanded = expanded ? 'true' : 'false';
+        const hidden = snippetList.querySelectorAll('.st-jets-snippet');
+        hidden.forEach((node, index) => {
+            if (index >= MAX_SNIPPETS) {
+                node.classList.toggle('is-hidden', !expanded);
+            }
+        });
+    };
+
+    snippetItems.forEach((snippet, index) => {
+        const line = document.createElement('div');
+        line.className = 'st-jets-snippet';
+        if (index >= MAX_SNIPPETS) {
+            line.classList.add('is-hidden');
+        }
+        appendHighlightedText(line, snippet.snippet, snippet.ranges, {
+            prefix: snippet.prefix,
+            suffix: snippet.suffix,
+        });
+        snippetList.appendChild(line);
+    });
+
+    if (snippetItems.length > MAX_SNIPPETS) {
+        const toggle = document.createElement('div');
+        toggle.className = 'st-jets-snippet-toggle';
+        toggle.textContent = '展开更多';
+        toggle.addEventListener('click', event => {
+            event.stopPropagation();
+            const expanded = snippetList.dataset.expanded !== 'true';
+            applyExpandedState(expanded);
+            toggle.textContent = expanded ? '收起' : '展开更多';
+        });
+        snippetList.appendChild(toggle);
+        applyExpandedState(false);
+    }
+
+    subtitle.appendChild(snippetList);
+
+    row.appendChild(title);
+    row.appendChild(subtitle);
+    row.addEventListener('click', () => void executeResult(result));
+
+    results.appendChild(row);
+    currentResults.push({ result, element: row });
 }
 
 function updateSelection(nextIndex) {
@@ -1969,6 +2184,12 @@ async function executeResult(result) {
     const item = result?.item;
     if (!item) {
         closeJets();
+        return;
+    }
+
+    // 书级行是挂载动作而非跳转：把书挂进搜索栏继续搜，弹窗保持打开
+    if (item.type === 'worldinfo_book') {
+        mountWorldBook(item?.metadata?.bookName);
         return;
     }
 
@@ -2286,6 +2507,56 @@ function renderCategoryChips() {
                 setCategories([...next]);
             },
         }));
+    }
+}
+
+// 挂载范围行：世界书分类同色（紫），点 chip 或 × 都可移除挂载
+function renderWorldScopeChips() {
+    const row = document.getElementById('st-jets-scope');
+    if (!row) return;
+    row.innerHTML = '';
+    row.hidden = worldScope.size === 0;
+    if (!worldScope.size) return;
+
+    const label = document.createElement('span');
+    label.className = 'st-jets-pin-rowlabel';
+    label.title = '世界书范围：挂载后，搜索只指向这些书的条目';
+    const labelIcon = document.createElement('i');
+    labelIcon.className = 'fa-solid fa-book-bookmark';
+    label.appendChild(labelIcon);
+    row.appendChild(label);
+
+    const color = CATEGORIES.find(category => category.id === 'worldinfo')?.color || '';
+    for (const name of worldScope) {
+        const chip = document.createElement('div');
+        chip.className = 'st-jets-chip is-active st-jets-scope-chip';
+        chip.title = '点击移除挂载，恢复全书搜索';
+        chip.setAttribute('role', 'button');
+        chip.tabIndex = 0;
+        if (color) {
+            chip.style.setProperty('--st-jets-chip-color', color);
+        }
+
+        const text = document.createElement('span');
+        text.className = 'st-jets-chip-text';
+        text.textContent = name;
+
+        const remove = document.createElement('span');
+        remove.className = 'st-jets-chip-remove';
+        remove.textContent = '×';
+        remove.title = '移除挂载';
+
+        chip.appendChild(text);
+        chip.appendChild(remove);
+        chip.addEventListener('click', () => unmountWorldBook(name));
+        chip.addEventListener('keydown', event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                event.stopPropagation();
+                unmountWorldBook(name);
+            }
+        });
+        row.appendChild(chip);
     }
 }
 

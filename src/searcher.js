@@ -91,8 +91,11 @@ export class Searcher {
      * @param {Set<string>|string[]|null} [filters.types] 允许的条目类型，null 表示全部
      * @param {string[]} [filters.requiredTerms] 必含关键词（AND 叠加），
      *   条目必须同时包含每个关键词才会命中；查询词为空时仅按关键词筛选
+     * @param {Function|null} [filters.filter] 条目预过滤（类型过滤之后、匹配之前），
+     *   返回 false 的条目直接跳过；用于世界书挂载范围等定向搜索
+     * @param {number|null} [filters.maxResults] 本次调用的结果上限，Infinity 表示不设限
      */
-    search(query, { types = null, requiredTerms = [] } = {}) {
+    search(query, { types = null, requiredTerms = [], filter = null, maxResults = null } = {}) {
         const normalizedQuery = normalizeText(query).trim();
         const typeSet = types
             ? (types instanceof Set ? types : new Set(Array.from(types || [])))
@@ -112,6 +115,9 @@ export class Searcher {
         const results = [];
         for (const item of this.items) {
             if (typeSet && !typeSet.has(item?.type)) {
+                continue;
+            }
+            if (typeof filter === 'function' && !filter(item)) {
                 continue;
             }
 
@@ -196,8 +202,13 @@ export class Searcher {
             return titleA.localeCompare(titleB);
         });
 
-        if (this.options.maxResults && results.length > this.options.maxResults) {
-            return results.slice(0, this.options.maxResults);
+        const cap = maxResults === Infinity
+            ? 0
+            : Number.isFinite(maxResults) && maxResults > 0
+                ? maxResults
+                : this.options.maxResults;
+        if (cap && results.length > cap) {
+            return results.slice(0, cap);
         }
 
         return results;
