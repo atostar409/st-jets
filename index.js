@@ -2298,24 +2298,38 @@ function appendResultRow(result) {
         snippetList.appendChild(line);
     });
 
+    // 展开按钮放在 subtitle 外层：subtitle 整体 opacity 0.7，放里面会被一起压暗
+    let snippetToggle = null;
     if (snippetItems.length > MAX_SNIPPETS) {
+        const hiddenCount = snippetItems.length - MAX_SNIPPETS;
+        const collapsedText = `展开更多 · 剩 ${hiddenCount} 段`;
         const toggle = document.createElement('div');
         toggle.className = 'st-jets-snippet-toggle';
-        toggle.textContent = '展开更多';
+        toggle.setAttribute('role', 'button');
+        const icon = document.createElement('i');
+        icon.className = 'st-jets-snippet-toggle-icon fa-solid fa-chevron-down';
+        const label = document.createElement('span');
+        label.className = 'st-jets-snippet-toggle-text';
+        label.textContent = collapsedText;
+        toggle.append(icon, label);
         toggle.addEventListener('click', event => {
             event.stopPropagation();
             const expanded = snippetList.dataset.expanded !== 'true';
             applyExpandedState(expanded);
-            toggle.textContent = expanded ? '收起' : '展开更多';
+            toggle.classList.toggle('is-open', expanded);
+            label.textContent = expanded ? '收起' : collapsedText;
         });
-        snippetList.appendChild(toggle);
         applyExpandedState(false);
+        snippetToggle = toggle;
     }
 
     subtitle.appendChild(snippetList);
 
     row.appendChild(title);
     row.appendChild(subtitle);
+    if (snippetToggle) {
+        row.appendChild(snippetToggle);
+    }
     row.addEventListener('click', () => void executeResult(result));
 
     results.appendChild(row);

@@ -174,11 +174,43 @@
 }
 
 .st-jets-snippet-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    align-self: flex-start;
+    padding: 2px 10px;
+    border-radius: 999px;
     font-size: 11px;
-    opacity: 0.6;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: #fdba74;
+    background: rgba(253, 186, 116, 0.12);
+    border: 1px solid rgba(253, 186, 116, 0.35);
+    opacity: 1;
     cursor: pointer;
     user-select: none;
-    margin-top: 2px;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.st-jets-snippet-toggle:hover,
+.st-jets-snippet-toggle:focus-visible {
+    background: rgba(253, 186, 116, 0.22);
+    border-color: rgba(253, 186, 116, 0.55);
+    outline: none;
+}
+
+.st-jets-snippet-toggle:active {
+    background: rgba(253, 186, 116, 0.28);
+}
+
+.st-jets-snippet-toggle-icon {
+    font-size: 9px;
+    line-height: 1;
+    transition: transform 0.18s ease;
+}
+
+.st-jets-snippet-toggle.is-open .st-jets-snippet-toggle-icon {
+    transform: rotate(180deg);
 }
 
 .st-jets-highlight {
