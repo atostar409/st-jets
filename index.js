@@ -421,7 +421,7 @@ const TYPE_LABELS = {
 const CATEGORIES = [
     { id: 'character', label: '角色/聊天', icon: 'fa-solid fa-user-group', color: '#7dd3fc', types: ['character', 'chat', 'chat_message'] },
     { id: 'worldinfo', label: '世界书', icon: 'fa-solid fa-book-bookmark', color: '#c4b5fd', types: ['worldinfo'] },
-              { id: 'preset', label: '预设', icon: 'fa-solid fa-sliders', color: '#e11d48', types: ['preset'] },
+              { id: 'preset', label: '预设', icon: 'fa-solid fa-sliders', color: '#e64980', types: ['preset'] },
 ];
 const ALL_CATEGORY_IDS = CATEGORIES.map(category => category.id);
 
