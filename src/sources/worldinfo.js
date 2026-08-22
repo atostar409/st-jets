@@ -3,6 +3,8 @@
  * 将世界书条目转换为可索引条目
  */
 
+const WORLDINFO_FETCH_CONCURRENCY = 4;
+
 export class WorldInfoSource {
     constructor(worldbooks = []) {
         this.worldbooks = worldbooks;
@@ -16,22 +18,32 @@ export class WorldInfoSource {
 
         const listResult = await api.worldBook.list({ scope });
         const books = Array.isArray(listResult?.worldBooks) ? listResult.worldBooks : [];
-        const fullBooks = [];
+        const fullBooks = new Array(books.length);
 
-        for (const book of books) {
-            const name = book?.name;
-            if (!name) continue;
-            try {
-                const result = await api.worldBook.get({ name, scope: book?.scope || scope });
-                if (result?.worldBook) {
-                    fullBooks.push(result.worldBook);
+        // 受控并发拉取各世界书，替代逐本串行请求
+        let cursor = 0;
+        const worker = async () => {
+            while (cursor < books.length) {
+                const index = cursor;
+                cursor += 1;
+                const book = books[index];
+                const name = book?.name;
+                if (!name) continue;
+                try {
+                    const result = await api.worldBook.get({ name, scope: book?.scope || scope });
+                    if (result?.worldBook) {
+                        fullBooks[index] = result.worldBook;
+                    }
+                } catch (err) {
+                    console.warn('WorldInfoSource.load: 获取世界书失败', name, err);
                 }
-            } catch (err) {
-                console.warn('WorldInfoSource.load: 获取世界书失败', name, err);
             }
-        }
+        };
 
-        this.worldbooks = fullBooks;
+        const workerCount = Math.max(1, Math.min(WORLDINFO_FETCH_CONCURRENCY, books.length));
+        await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+        this.worldbooks = fullBooks.filter(Boolean);
         return this.worldbooks;
     }
 

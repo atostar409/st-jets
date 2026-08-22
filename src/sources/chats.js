@@ -92,8 +92,25 @@ export class ChatSource {
             includeSystem: false,
             maxMessagesPerChat: Number.POSITIVE_INFINITY,
             listMax: 50,
+            processContent: null,
             ...options,
         };
+    }
+
+    /**
+     * 内容加工钩子：索引前对消息文本做处理（如剥离思维链标签）。
+     * 返回处理后的文本；未配置时原样返回。
+     */
+    processContentValue(text) {
+        const processor = this.options?.processContent;
+        if (typeof processor === 'function') {
+            try {
+                return processor(text);
+            } catch {
+                return text;
+            }
+        }
+        return text;
     }
 
     async load({ max = this.options.listMax, includeMessages = this.options.includeMessages } = {}) {
@@ -176,11 +193,13 @@ export class ChatSource {
                 if (added >= maxMessagesPerChat) {
                     return;
                 }
-                const content = safeString(message?.mes || '');
-                if (!content.trim()) return;
+                if (!safeString(message?.mes || '').trim()) return;
                 if (!includeSystem && message?.is_system) return;
 
-                items.push(this.buildMessageItem(chat, message, messageIndex, chatItem));
+                const item = this.buildMessageItem(chat, message, messageIndex, chatItem);
+                if (!item.content.trim()) return;
+
+                items.push(item);
                 added += 1;
             });
         });
@@ -212,7 +231,7 @@ export class ChatSource {
             id: `chat-${chatId}`,
             type: 'chat',
             title,
-            content: getPreviewMessage(chat),
+            content: this.processContentValue(getPreviewMessage(chat)),
             metadata: {
                 chatId,
                 fileId,
@@ -236,7 +255,7 @@ export class ChatSource {
             id: `chatmsg-${chatId}-${messageIndex}`,
             type: 'chat_message',
             title: sender,
-            content: safeString(message?.mes || ''),
+            content: this.processContentValue(safeString(message?.mes || '')),
             metadata: {
                 chatId,
                 fileId: chatMeta.fileId || getFileId(chat),

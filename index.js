@@ -1,4 +1,5 @@
 import { toggleDrawer } from '../../../utils.js';
+import { extension_settings, saveSettingsDebounced } from '../../../script.js';
 import {
     Searcher,
     DataLoader,
@@ -6,6 +7,7 @@ import {
     WorldInfoSource,
     PresetSource,
     ChatSource,
+    jetsCache,
 } from './src/index.js';
 
 let jetsIdCounter = 0;
@@ -402,47 +404,26 @@ class SettingsSource {
 }
 
 const TYPE_LABELS = {
-    character: 'Characters',
-    chat: 'Chats',
-    chat_message: 'Messages',
-    worldinfo: 'World Info',
-    preset: 'Presets',
-    quickreply: 'Quick Reply',
-    regex: 'Regex',
-    settings: 'Settings',
-    other: 'Other',
+    character: '角色卡',
+    chat: '聊天',
+    chat_message: '聊天消息',
+    worldinfo: '世界书',
+    preset: '预设',
+    quickreply: '快捷回复',
+    regex: '正则',
+    settings: '设置',
+    other: '其他',
 };
 
-const FALLBACK_ITEMS = [
-    {
-        id: 'character-1',
-        type: 'character',
-        title: 'Character Alice',
-        content: 'A friendly character for testing.',
-        metadata: { characterId: 0 },
-    },
-    {
-        id: 'character-2',
-        type: 'character',
-        title: 'Character Bob',
-        content: 'Another test character.',
-        metadata: { characterId: 1 },
-    },
-    {
-        id: 'worldinfo-1',
-        type: 'worldinfo',
-        title: 'World Entry Alpha',
-        content: 'A world entry for JETS tests.',
-        metadata: { bookName: 'TestBook', entryIndex: 0 },
-    },
-    {
-        id: 'preset-context-default',
-        type: 'preset',
-        title: 'Default Preset',
-        content: 'Default preset content.',
-        metadata: { presetType: 'context', presetName: 'Default' },
-    },
+// 搜索分类：chips 可多选，results 按 types 归属到分类
+const CATEGORIES = [
+    { id: 'character', label: '角色', types: ['character'] },
+    { id: 'chat', label: '聊天', types: ['chat', 'chat_message'] },
+    { id: 'worldinfo', label: '世界书', types: ['worldinfo'] },
+    { id: 'preset', label: '预设', types: ['preset'] },
+    { id: 'settings', label: '设置', types: ['settings', 'quickreply', 'regex'] },
 ];
+const ALL_CATEGORY_IDS = CATEGORIES.map(category => category.id);
 
 const STATIC_ITEMS = [
     {
@@ -539,11 +520,164 @@ function getUsageExtraScore(item) {
     return score;
 }
 
+// ===== 插件设置（保存于 SillyTavern extension_settings，随酒馆设置备份迁移） =====
+
+const DEFAULT_REASONING_TAGS = ['think', 'thinking', 'reasoning'];
+const MAX_REASONING_TAGS = 12;
+const MAX_PINNED_TERMS = 30;
+
+function getJetsSettings() {
+    let settings = extension_settings?.stJets;
+    if (!settings || typeof settings !== 'object') {
+        settings = {};
+        if (extension_settings) {
+            extension_settings.stJets = settings;
+        }
+    }
+
+    const knownIds = new Set(ALL_CATEGORY_IDS);
+    if (!Array.isArray(settings.categories) || !settings.categories.length) {
+        settings.categories = [...ALL_CATEGORY_IDS];
+    }
+    else {
+        settings.categories = settings.categories.filter(id => knownIds.has(id));
+        if (!settings.categories.length) {
+            settings.categories = [...ALL_CATEGORY_IDS];
+        }
+    }
+
+    if (typeof settings.stripReasoning !== 'boolean') {
+        settings.stripReasoning = true;
+    }
+
+    if (!Array.isArray(settings.reasoningTags)) {
+        settings.reasoningTags = [...DEFAULT_REASONING_TAGS];
+    }
+    settings.reasoningTags = settings.reasoningTags
+        .map(tag => String(tag || '').trim().toLowerCase())
+        .filter(Boolean)
+        .slice(0, MAX_REASONING_TAGS);
+
+    if (!Array.isArray(settings.pinnedTerms)) {
+        settings.pinnedTerms = [];
+    }
+    const seenPins = new Set();
+    settings.pinnedTerms = settings.pinnedTerms
+        .map(term => (typeof term === 'string' ? { text: term, enabled: true } : term))
+        .filter(term => term && typeof term.text === 'string' && term.text.trim())
+        .map(term => ({ text: term.text.trim().slice(0, 24), enabled: term.enabled !== false }))
+        .filter(term => {
+            if (seenPins.has(term.text)) return false;
+            seenPins.add(term.text);
+            return true;
+        })
+        .slice(0, MAX_PINNED_TERMS);
+
+    return settings;
+}
+
+function saveJetsSettings() {
+    if (typeof saveSettingsDebounced === 'function') {
+        saveSettingsDebounced();
+    }
+}
+
+function getActiveTypes() {
+    const settings = getJetsSettings();
+    if (settings.categories.length >= ALL_CATEGORY_IDS.length) {
+        return null;
+    }
+    const enabled = new Set(settings.categories);
+    const types = new Set();
+    for (const category of CATEGORIES) {
+        if (enabled.has(category.id)) {
+            category.types.forEach(type => types.add(type));
+        }
+    }
+    return types.size ? types : null;
+}
+
+function getPinnedTerms() {
+    return getJetsSettings().pinnedTerms;
+}
+
+function getEnabledPinnedTerms() {
+    return getPinnedTerms().filter(term => term.enabled).map(term => term.text);
+}
+
+function addPinnedTerm(text) {
+    const value = String(text || '').trim().slice(0, 24);
+    if (!value) return;
+    const settings = getJetsSettings();
+    if (settings.pinnedTerms.some(term => term.text === value)) return;
+    settings.pinnedTerms.push({ text: value, enabled: true });
+    saveJetsSettings();
+    renderPinChips();
+    rerunSearchIfOpen();
+}
+
+function removePinnedTerm(text) {
+    const settings = getJetsSettings();
+    settings.pinnedTerms = settings.pinnedTerms.filter(term => term.text !== text);
+    saveJetsSettings();
+    renderPinChips();
+    rerunSearchIfOpen();
+}
+
+function togglePinnedTerm(text) {
+    const settings = getJetsSettings();
+    const term = settings.pinnedTerms.find(item => item.text === text);
+    if (!term) return;
+    term.enabled = !term.enabled;
+    saveJetsSettings();
+    renderPinChips();
+    rerunSearchIfOpen();
+}
+
+// ===== 思维链（推理标签）过滤 =====
+
+let reasoningRegexCache = null;
+let reasoningRegexKey = '';
+
+function escapeRegExp(text) {
+    return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getReasoningRegex() {
+    const tags = getJetsSettings().reasoningTags;
+    if (!tags.length) return null;
+    const key = tags.join('|');
+    if (reasoningRegexCache && reasoningRegexKey === key) {
+        return reasoningRegexCache;
+    }
+    const names = tags.map(escapeRegExp).join('|');
+    reasoningRegexCache = new RegExp(
+        `<(${names})(?:\\s[^>]*)?>[\\s\\S]*?</\\1\\s*>`   // 闭合块 <think>…</think>
+        + `|<(${names})(?:\\s[^>]*)?>[\\s\\S]*$`,          // 未闭合块：<think>… 直到结尾
+        'gi',
+    );
+    reasoningRegexKey = key;
+    return reasoningRegexCache;
+}
+
+function stripReasoningBlocks(value) {
+    if (!value) return value;
+    const regex = getReasoningRegex();
+    if (!regex) return value;
+    return String(value).replace(regex, '');
+}
+
+function processMessageContent(value) {
+    const settings = getJetsSettings();
+    if (!settings.stripReasoning) return value;
+    return stripReasoningBlocks(value);
+}
+
 const searcher = new Searcher({
     maxResults: 50,
     getExtraScore: (item) => getUsageExtraScore(item),
 });
-searcher.addBatch([...STATIC_ITEMS, ...FALLBACK_ITEMS]);
+searcher.addBatch([...STATIC_ITEMS]);
 
 function registerTestApi() {
     if (typeof window === 'undefined') return;
@@ -576,6 +710,7 @@ const chatSource = new ChatSource([], {
     includeMessages: false,
     maxMessagesPerChat: Number.POSITIVE_INFINITY,
     listMax: Number.MAX_SAFE_INTEGER,
+    processContent: processMessageContent,
 });
 chatSource.type = 'chat';
 
@@ -596,51 +731,245 @@ const dataLoader = new DataLoader({
 });
 
 let indexLoadPromise = null;
+let settingsIndexDirty = true;
 
-async function refreshIndex({ force = false } = {}) {
-    const items = await dataLoader.loadAll({ force });
-    searcher.clear();
-    searcher.addBatch([...STATIC_ITEMS, ...FALLBACK_ITEMS, ...items]);
-    startBackgroundChatIndexing();
-    return items;
+// ===== IndexedDB 缓存辅助 =====
+
+const cacheChatMeta = new Map(); // chatId -> { signature, messageCount }
+
+function updateIndexStatusUi() {
+    const chatCount = cacheChatMeta.size;
+    const messageCount = Array.from(cacheChatMeta.values())
+        .reduce((sum, meta) => sum + (meta.messageCount || 0), 0);
+    const status = document.getElementById('st-jets-index-status');
+    if (status) {
+        status.textContent = `已索引 ${chatCount} 个聊天 · ${messageCount} 条消息`;
+    }
 }
 
-function ensureBaseItems() {
-    const existingIds = new Set(searcher.items.map(item => item?.id).filter(Boolean));
-    const baseItems = [...STATIC_ITEMS, ...FALLBACK_ITEMS];
-    const missing = baseItems.filter(item => item?.id && !existingIds.has(item.id));
-    if (missing.length) {
-        searcher.addBatch(missing);
+function computeChatSignature(chat) {
+    return JSON.stringify([
+        chat?.file_name || chat?.fileName || '',
+        chat?.file_id || chat?.fileId || '',
+        chat?.file_size || '',
+        chat?.chat_items ?? chat?.messageCount ?? '',
+        chat?.last_mes ?? '',
+    ]);
+}
+
+function pseudoChatFromRecord(record) {
+    return {
+        characterName: record.characterName || '',
+        avatar: record.avatar || '',
+        groupId: record.groupId || '',
+        group: record.groupId || '',
+        fileId: record.fileId || record.chatId,
+        file_id: record.fileId || record.chatId,
+        fileName: record.fileName || '',
+        file_name: record.fileName || '',
+        preview_message: record.preview || '',
+        last_mes: record.lastMessageAt || '',
+        chat_items: Array.isArray(record.messages) ? record.messages.length : 0,
+        messages: record.messages || [],
+    };
+}
+
+function cacheRecordFromChat(chat, messages, signature) {
+    const chatItem = chatSource.buildChatItem(chat, 0);
+    const slimMessages = (Array.isArray(messages) ? messages : [])
+        .map((message, index) => ({
+            mes: String(message?.mes ?? ''),
+            name: message?.name || (message?.is_user ? 'User' : ''),
+            is_user: !!message?.is_user,
+            is_system: !!message?.is_system,
+            index,
+        }))
+        .filter(message => message.mes.trim());
+    return {
+        chatId: chatItem?.metadata?.chatId || '',
+        signature: signature || '',
+        characterName: chatItem?.metadata?.characterName || '',
+        avatar: chatItem?.metadata?.avatar || '',
+        groupId: chatItem?.metadata?.groupId || '',
+        fileId: chatItem?.metadata?.fileId || '',
+        fileName: chatItem?.metadata?.fileName || '',
+        preview: chatItem?.content || '',
+        lastMessageAt: chatItem?.metadata?.lastMessageAt || '',
+        messages: slimMessages,
+    };
+}
+
+function appendChatItemsWithoutDuplicates(items = []) {
+    const existingChatIds = new Set(
+        searcher.items.filter(item => item?.type === 'chat').map(item => item.id),
+    );
+    for (const item of items) {
+        if (item?.type === 'chat') {
+            if (existingChatIds.has(item.id)) continue;
+            existingChatIds.add(item.id);
+        }
+        searcher.add(item);
     }
+}
+
+/**
+ * 从 IndexedDB 恢复聊天索引：零网络请求，分批构建并周期性让出主线程。
+ */
+async function restoreChatIndexFromCache() {
+    try {
+        await jetsCache.ensureSchema();
+        const pseudoChats = [];
+        await jetsCache.forEachChat(records => {
+            for (const record of records) {
+                cacheChatMeta.set(record.chatId, {
+                    signature: record.signature,
+                    messageCount: Array.isArray(record.messages) ? record.messages.length : 0,
+                });
+                pseudoChats.push(pseudoChatFromRecord(record));
+            }
+        });
+
+        const BATCH = 100;
+        for (let i = 0; i < pseudoChats.length; i += BATCH) {
+            const items = chatSource.toIndexItems(pseudoChats.slice(i, i + BATCH), { includeMessages: true });
+            appendChatItemsWithoutDuplicates(items);
+            await new Promise(resolve => setTimeout(resolve, 0)); // 让出主线程
+        }
+        updateIndexStatusUi();
+    } catch (err) {
+        console.warn('JETS: 从缓存恢复索引失败', err);
+    }
+}
+
+/**
+ * 思维链过滤开关/标签变更后，从缓存的原始数据即时重建消息条目（无需重新请求网络）。
+ */
+function rebuildChatItemsFromCache() {
+    searcher.replaceByFilter(item => item?.type === 'chat_message', []);
+    void restoreChatIndexFromCache().then(() => rerunSearchIfOpen());
+}
+
+async function rebuildChatIndex() {
+    resetBackgroundChatIndexing();
+    searcher.replaceByFilter(item => item?.type === 'chat' || item?.type === 'chat_message', []);
+    cacheChatMeta.clear();
+    await jetsCache.clearChats();
+    startBackgroundChatIndexing();
+    updateIndexStatusUi();
+}
+
+// ===== 启动调度：等待 APP_READY + 空闲时段，不与其他扩展抢加载关键路径 =====
+
+function waitForAppReady(timeoutMs = 20000) {
+    return new Promise(resolve => {
+        let settled = false;
+        const finish = () => {
+            if (!settled) {
+                settled = true;
+                resolve();
+            }
+        };
+        const tryBind = (attempts = 0) => {
+            const context = getContextFromGlobal();
+            const eventSource = context?.eventSource;
+            const eventTypes = context?.eventTypes;
+            if (eventSource?.once && eventTypes?.APP_READY) {
+                eventSource.once(eventTypes.APP_READY, finish);
+                setTimeout(finish, timeoutMs);
+                return;
+            }
+            if (attempts < 40) {
+                setTimeout(() => tryBind(attempts + 1), 500);
+            } else {
+                finish();
+            }
+        };
+        tryBind();
+    });
+}
+
+function scheduleIdle(callback, timeout = 4000) {
+    if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(callback, { timeout });
+    } else {
+        setTimeout(callback, 150);
+    }
+}
+
+async function performStartupLoad() {
+    // 1. 本地缓存先行：二次加载毫秒级可搜
+    await restoreChatIndexFromCache();
+    // 2. 轻量数据源（角色 / 世界书 / 预设 / 设置 / 聊天列表）
+    const items = await dataLoader.loadAll({ force: false });
+    const nonChatItems = items.filter(item => item?.type !== 'chat');
+    const chatListItems = items.filter(item => item?.type === 'chat');
+    // 保留缓存恢复出的 chat_message，其余整体替换
+    searcher.replaceByFilter(item => item?.type !== 'chat_message', []);
+    searcher.addBatch([...STATIC_ITEMS, ...nonChatItems, ...chatListItems]);
+    // 3. 仅把新增/变更的聊天排入后台增量索引
+    startBackgroundChatIndexing();
+}
+
+function ensureDataLoaded() {
+    if (!indexLoadPromise) {
+        indexLoadPromise = (async () => {
+            await waitForAppReady();
+            await new Promise(resolve => scheduleIdle(resolve));
+            await performStartupLoad();
+        })();
+    }
+    return indexLoadPromise;
 }
 
 async function refreshSettingsIndex() {
     const items = await dataLoader.loadByType('settings', { force: true });
     searcher.replaceByType('settings', items);
-    ensureBaseItems();
     return items;
 }
 
-function ensureDataLoaded() {
-    if (!indexLoadPromise) {
-        indexLoadPromise = refreshIndex();
-    }
-    return indexLoadPromise;
-}
-
-const BACKGROUND_CHAT_BATCH_SIZE = 2;
-const BACKGROUND_CHAT_DELAY = 80;
+const BACKGROUND_CHAT_BATCH_SIZE = 3;
 let backgroundChatQueue = [];
 let backgroundChatRunning = false;
-let backgroundChatTimer = null;
+let backgroundIdleHandle = null;
+let backgroundPaused = false; // AI 生成期间暂停后台索引，避免抢占资源
 
 function resetBackgroundChatIndexing() {
     backgroundChatQueue = [];
     backgroundChatRunning = false;
-    if (backgroundChatTimer) {
-        clearTimeout(backgroundChatTimer);
-        backgroundChatTimer = null;
+    if (backgroundIdleHandle) {
+        if (typeof cancelIdleCallback === 'function') {
+            cancelIdleCallback(backgroundIdleHandle);
+        } else {
+            clearTimeout(backgroundIdleHandle);
+        }
+        backgroundIdleHandle = null;
     }
+}
+
+function scheduleBackgroundChatWork() {
+    if (backgroundIdleHandle) return;
+    const run = () => {
+        backgroundIdleHandle = null;
+        void processBackgroundChatQueue();
+    };
+    if (typeof requestIdleCallback === 'function') {
+        backgroundIdleHandle = requestIdleCallback(run, { timeout: 3000 });
+    } else {
+        backgroundIdleHandle = setTimeout(run, 120);
+    }
+}
+
+async function processBackgroundChatQueue() {
+    if (backgroundPaused) return;
+    if (!backgroundChatQueue.length) {
+        backgroundChatRunning = false;
+        updateIndexStatusUi();
+        return;
+    }
+    const batch = backgroundChatQueue.splice(0, BACKGROUND_CHAT_BATCH_SIZE);
+    await indexChatMessagesBatch(batch);
+    updateIndexStatusUi();
+    scheduleBackgroundChatWork();
 }
 
 async function indexChatMessagesBatch(chats = []) {
@@ -649,60 +978,71 @@ async function indexChatMessagesBatch(chats = []) {
         ? chatSource.options.maxMessagesPerChat
         : Number.POSITIVE_INFINITY;
 
-    await Promise.all(chats.map(async ({ chat, index }) => {
+    await Promise.all(chats.map(async ({ chat, signature }) => {
         if (!chat) return;
         try {
-            const messages = await chatSource.loadMessagesForChat(chat);
-            const chatItem = chatSource.buildChatItem(chat, index);
+            const chatItem = chatSource.buildChatItem(chat, 0);
             const chatId = chatItem?.metadata?.chatId;
             if (!chatId) return;
 
+            const messages = await chatSource.loadMessagesForChat(chat);
             const messageItems = [];
             let added = 0;
             messages.forEach((message, messageIndex) => {
                 if (added >= maxMessagesPerChat) {
                     return;
                 }
-                const content = message?.mes;
-                if (!content || !String(content).trim()) return;
+                if (!String(message?.mes ?? '').trim()) return;
                 if (!includeSystem && message?.is_system) return;
-                messageItems.push(chatSource.buildMessageItem(chat, message, messageIndex, chatItem));
+                const item = chatSource.buildMessageItem(chat, message, messageIndex, chatItem);
+                if (!item.content.trim()) return;
+                messageItems.push(item);
                 added += 1;
             });
 
             searcher.replaceByFilter(item => {
                 return item?.type === 'chat_message' && item?.metadata?.chatId === chatId;
             }, messageItems);
-            ensureBaseItems();
+
+            const record = cacheRecordFromChat(chat, messages, signature);
+            if (record.chatId) {
+                await jetsCache.putChat(record);
+                cacheChatMeta.set(record.chatId, {
+                    signature: record.signature,
+                    messageCount: record.messages.length,
+                });
+            }
         } catch (err) {
             console.warn('JETS: 背景索引聊天失败', err);
         }
     }));
 }
 
-function processBackgroundChatQueue() {
-    if (!backgroundChatQueue.length) {
-        backgroundChatRunning = false;
-        return;
-    }
-    const batch = backgroundChatQueue.splice(0, BACKGROUND_CHAT_BATCH_SIZE);
-    indexChatMessagesBatch(batch).finally(() => {
-        backgroundChatTimer = setTimeout(processBackgroundChatQueue, BACKGROUND_CHAT_DELAY);
-    });
-}
-
 function startBackgroundChatIndexing() {
-    if (backgroundChatRunning) {
-        return;
-    }
     const chats = Array.isArray(chatSource.chats) ? chatSource.chats : [];
     if (!chats.length) {
         return;
     }
-    resetBackgroundChatIndexing();
-    backgroundChatQueue = chats.map((chat, index) => ({ chat, index }));
+
+    // 增量索引：只排队缓存缺失或签名变更（新增/更新）的聊天
+    const pending = [];
+    for (const chat of chats) {
+        const signature = computeChatSignature(chat);
+        const chatId = chatSource.buildChatItem(chat, 0)?.metadata?.chatId;
+        if (!chatId) continue;
+        const cached = cacheChatMeta.get(chatId);
+        if (cached && cached.signature === signature) continue;
+        pending.push({ chat, signature });
+    }
+    if (!pending.length) {
+        return;
+    }
+
+    backgroundChatQueue = backgroundChatRunning
+        ? backgroundChatQueue.concat(pending)
+        : pending;
     backgroundChatRunning = true;
-    processBackgroundChatQueue();
+    scheduleBackgroundChatWork();
 }
 
 let liveChatIndexBound = false;
@@ -764,7 +1104,20 @@ function refreshLiveChatIndex() {
         if (item.type !== 'chat' && item.type !== 'chat_message') return false;
         return item?.metadata?.chatId === chatId;
     }, items);
-    ensureBaseItems();
+
+    // 写穿缓存：当前聊天的最新内容立即持久化，下次启动免重新请求
+    const messages = Array.isArray(context.chat) ? context.chat : [];
+    const signature = cacheChatMeta.get(chatId)?.signature || `live:${messages.length}`;
+    const record = cacheRecordFromChat(snapshot, messages, signature);
+    if (record.chatId) {
+        void jetsCache.putChat(record).then(() => {
+            cacheChatMeta.set(record.chatId, {
+                signature: record.signature,
+                messageCount: record.messages.length,
+            });
+            updateIndexStatusUi();
+        });
+    }
     return true;
 }
 
@@ -804,6 +1157,30 @@ function bindLiveChatIndexing() {
         eventTypes.CHAT_CHANGED,
     ];
     events.forEach(type => eventSource.on(type, handler));
+
+    // AI 生成期间暂停后台索引，结束后恢复
+    if (eventTypes.GENERATION_STARTED) {
+        eventSource.on(eventTypes.GENERATION_STARTED, () => {
+            backgroundPaused = true;
+        });
+    }
+    [eventTypes.GENERATION_STOPPED, eventTypes.GENERATION_ENDED].forEach(type => {
+        if (!type) return;
+        eventSource.on(type, () => {
+            backgroundPaused = false;
+            if (backgroundChatRunning && backgroundChatQueue.length) {
+                scheduleBackgroundChatWork();
+            }
+        });
+    });
+
+    // 酒馆设置变更后，下次打开搜索框再重扫设置面板
+    if (eventTypes.SETTINGS_UPDATED) {
+        eventSource.on(eventTypes.SETTINGS_UPDATED, () => {
+            settingsIndexDirty = true;
+        });
+    }
+
     liveChatIndexBound = true;
     scheduleLiveChatIndexRefresh(0);
 }
@@ -841,22 +1218,88 @@ function ensureDom() {
     modal = document.createElement('div');
     modal.id = 'st-jets-modal';
 
+    const header = document.createElement('div');
+    header.id = 'st-jets-header';
+
     input = document.createElement('input');
     input.id = 'st-jets-input';
     input.type = 'text';
-    input.placeholder = 'Search anything...';
+    input.placeholder = '搜索角色 / 聊天 / 世界书 / 预设 / 设置…';
     input.autocomplete = 'off';
+    input.setAttribute('enterkeyhint', 'search');
+
+    const settingsButton = document.createElement('div');
+    settingsButton.id = 'st-jets-settings-toggle';
+    settingsButton.className = 'fa-solid fa-gear';
+    settingsButton.title = '设置';
+    settingsButton.setAttribute('aria-label', '设置');
+    settingsButton.setAttribute('role', 'button');
+    settingsButton.tabIndex = 0;
+    settingsButton.addEventListener('click', event => {
+        event.stopPropagation();
+        toggleSettingsPanel();
+    });
+    settingsButton.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            toggleSettingsPanel();
+        }
+    });
+
+    const closeButton = document.createElement('div');
+    closeButton.id = 'st-jets-close';
+    closeButton.className = 'fa-solid fa-xmark';
+    closeButton.title = '关闭';
+    closeButton.setAttribute('aria-label', '关闭');
+    closeButton.setAttribute('role', 'button');
+    closeButton.tabIndex = 0;
+    closeButton.addEventListener('click', event => {
+        event.stopPropagation();
+        closeJets();
+    });
+    closeButton.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            closeJets();
+        }
+    });
+
+    header.appendChild(input);
+    header.appendChild(settingsButton);
+    header.appendChild(closeButton);
+
+    const toolbar = document.createElement('div');
+    toolbar.id = 'st-jets-toolbar';
+
+    const categoriesRow = document.createElement('div');
+    categoriesRow.id = 'st-jets-categories';
+    categoriesRow.className = 'st-jets-chip-row';
+
+    const pinsRow = document.createElement('div');
+    pinsRow.id = 'st-jets-pins';
+    pinsRow.className = 'st-jets-chip-row';
+
+    toolbar.appendChild(categoriesRow);
+    toolbar.appendChild(pinsRow);
+
+    const settingsPanel = buildSettingsPanel();
 
     results = document.createElement('div');
     results.id = 'st-jets-results';
 
-    modal.appendChild(input);
+    modal.appendChild(header);
+    modal.appendChild(toolbar);
+    modal.appendChild(settingsPanel);
     modal.appendChild(results);
     container.appendChild(overlay);
     container.appendChild(modal);
     document.body.appendChild(container);
 
     overlay.addEventListener('click', closeJets);
+    overlay.addEventListener('pointerdown', event => {
+        if (event.button !== undefined && event.button !== 0) return;
+        closeJets();
+    });
     input.addEventListener('input', handleSearchInput);
 }
 
@@ -871,8 +1314,7 @@ function ensureMobileEntry() {
     const button = document.createElement('div');
     button.id = 'st-jets-mobile-button';
     button.className = 'drawer-icon fa-solid fa-magnifying-glass';
-    button.title = 'Search (JETS)';
-    button.setAttribute('data-i18n', '[title]Search (JETS)');
+    button.title = '搜索 (JETS)';
     button.addEventListener('click', toggleJets);
     host.appendChild(button);
 }
@@ -881,7 +1323,14 @@ function openJets() {
     if (isOpen) return;
     ensureDom();
     ensureDataLoaded();
-    void refreshSettingsIndex();
+    if (settingsIndexDirty) {
+        settingsIndexDirty = false;
+        void refreshSettingsIndex();
+    }
+    renderCategoryChips();
+    renderPinChips();
+    refreshSettingsPanel();
+    updateIndexStatusUi();
     isOpen = true;
     container.classList.add('is-open');
     container.setAttribute('aria-hidden', 'false');
@@ -916,6 +1365,9 @@ function closeJets() {
         clearInterval(queryWatcher);
         queryWatcher = null;
     }
+    if (input && document.activeElement === input) {
+        input.blur();
+    }
 }
 
 function toggleJets() {
@@ -931,7 +1383,7 @@ function handleSearchInput() {
         clearTimeout(searchTimer);
     }
     const query = input.value.trim();
-    if (!query) {
+    if (!query && !getEnabledPinnedTerms().length) {
         clearResults();
         hideResults();
         return;
@@ -940,22 +1392,32 @@ function handleSearchInput() {
     searchTimer = setTimeout(runSearch, 200);
 }
 
+function rerunSearchIfOpen() {
+    if (isOpen) {
+        runSearch();
+    }
+}
+
 function runSearch() {
     const query = input.value.trim();
-    if (!query) {
+    const pins = getEnabledPinnedTerms();
+    if (!query && !pins.length) {
         clearResults();
         hideResults();
         return;
     }
 
     if (!searcher.items.length) {
-        searcher.addBatch([...STATIC_ITEMS, ...FALLBACK_ITEMS]);
+        searcher.addBatch([...STATIC_ITEMS]);
     }
 
-    let found = searcher.search(query);
+    const filters = { types: getActiveTypes(), requiredTerms: pins };
+    let found = searcher.search(query, filters);
     if (!found.length && query.length <= 1) {
+        const typeSet = filters.types;
+        const fallbackItems = [...STATIC_ITEMS]
+            .filter(item => !typeSet || typeSet.has(item.type));
         const limit = searcher.options?.maxResults || 50;
-        const fallbackItems = [...STATIC_ITEMS, ...FALLBACK_ITEMS];
         found = fallbackItems.slice(0, limit).map(item => ({ item, score: 0, matches: [] }));
     }
     renderResults(found);
@@ -992,6 +1454,7 @@ function normalizeRanges(ranges = [], length = 0) {
         .map(range => ({
             start: Math.max(0, Math.min(length, range.start)),
             end: Math.max(0, Math.min(length, range.end)),
+            kind: range.kind,
         }))
         .filter(range => range.end > range.start)
         .sort((a, b) => a.start - b.start);
@@ -1111,7 +1574,9 @@ function appendHighlightedText(container, text, ranges, { prefix = '', suffix = 
             container.appendChild(document.createTextNode(text.slice(cursor, range.start)));
         }
         const mark = document.createElement('span');
-        mark.className = 'st-jets-highlight';
+        mark.className = range.kind === 'term'
+            ? 'st-jets-highlight st-jets-highlight-term'
+            : 'st-jets-highlight';
         mark.textContent = text.slice(range.start, range.end);
         container.appendChild(mark);
         cursor = range.end;
@@ -1129,7 +1594,9 @@ function renderResults(found) {
     if (!found.length) {
         const empty = document.createElement('div');
         empty.className = 'st-jets-empty';
-        empty.textContent = 'No results';
+        empty.textContent = getEnabledPinnedTerms().length
+            ? '没有同时命中所有已启用关键词的结果'
+            : '没有找到结果';
         results.appendChild(empty);
         return;
     }
@@ -1424,6 +1891,7 @@ function openPanel(selector) {
     const panel = document.querySelector(selector);
     if (panel) {
         panel.classList.add('openDrawer');
+        settingsIndexDirty = true;
     }
 }
 
@@ -1500,6 +1968,11 @@ function focusWorldEntry(entryIndex) {
     setTimeout(() => entry.classList.remove('st-jets-target'), 1200);
 }
 
+function isAuxiliaryInputTarget(target) {
+    if (!target || typeof target.closest !== 'function') return false;
+    return !!(target.closest('#st-jets-settings') || target.id === 'st-jets-pin-input');
+}
+
 function handleGlobalKeydown(event) {
     const keyLower = String(event?.key || '').toLowerCase();
     const code = event?.code;
@@ -1519,6 +1992,11 @@ function handleGlobalKeydown(event) {
     }
 
     if (!isOpen) {
+        return;
+    }
+
+    // 在设置面板/词条输入框中打字时不劫持按键
+    if (isAuxiliaryInputTarget(event.target)) {
         return;
     }
 
@@ -1552,6 +2030,352 @@ function handleGlobalKeydown(event) {
             void executeResult(currentResults[selectedIndex].result);
         }
     }
+}
+
+// ===== 分类 / 常驻词条 chips 与设置面板 =====
+
+function createChip({ label, active = false, title = '', onClick }) {
+    const chip = document.createElement('div');
+    chip.className = 'st-jets-chip' + (active ? ' is-active' : '');
+    if (title) {
+        chip.title = title;
+    }
+    chip.setAttribute('role', 'button');
+    chip.tabIndex = 0;
+    chip.textContent = label;
+    chip.addEventListener('click', event => {
+        event.stopPropagation();
+        onClick?.();
+    });
+    chip.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            event.stopPropagation();
+            onClick?.();
+        }
+    });
+    return chip;
+}
+
+function setCategories(ids) {
+    const settings = getJetsSettings();
+    settings.categories = ids.length ? ids : [...ALL_CATEGORY_IDS];
+    saveJetsSettings();
+    renderCategoryChips();
+    rerunSearchIfOpen();
+}
+
+function renderCategoryChips() {
+    const row = document.getElementById('st-jets-categories');
+    if (!row) return;
+    row.innerHTML = '';
+
+    const settings = getJetsSettings();
+    const enabled = new Set(settings.categories);
+
+    row.appendChild(createChip({
+        label: '全部',
+        active: enabled.size >= ALL_CATEGORY_IDS.length,
+        title: '搜索所有分类',
+        onClick: () => setCategories([...ALL_CATEGORY_IDS]),
+    }));
+
+    for (const category of CATEGORIES) {
+        row.appendChild(createChip({
+            label: category.label,
+            active: enabled.has(category.id),
+            title: enabled.has(category.id) ? `点击排除「${category.label}」` : `点击只加入「${category.label}」`,
+            onClick: () => {
+                const next = new Set(enabled);
+                if (next.has(category.id)) {
+                    if (next.size <= 1) return; // 至少保留一个分类
+                    next.delete(category.id);
+                } else {
+                    next.add(category.id);
+                }
+                setCategories([...next]);
+            },
+        }));
+    }
+}
+
+function renderPinChips() {
+    const row = document.getElementById('st-jets-pins');
+    if (!row) return;
+    row.innerHTML = '';
+
+    const label = document.createElement('span');
+    label.className = 'st-jets-pin-rowlabel';
+    label.title = '常驻关键词：启用后结果必须同时包含这些词，叠加越多越精准';
+    const labelIcon = document.createElement('i');
+    labelIcon.className = 'fa-solid fa-tag';
+    label.appendChild(labelIcon);
+    row.appendChild(label);
+
+    for (const pin of getPinnedTerms()) {
+        const chip = document.createElement('div');
+        chip.className = 'st-jets-chip st-jets-pin' + (pin.enabled ? ' is-active' : '');
+        chip.title = pin.enabled ? '点击停用（词条保留）' : '点击启用筛选';
+        chip.setAttribute('role', 'button');
+        chip.tabIndex = 0;
+
+        const text = document.createElement('span');
+        text.className = 'st-jets-chip-text';
+        text.textContent = pin.text;
+
+        const remove = document.createElement('span');
+        remove.className = 'st-jets-chip-remove';
+        remove.textContent = '×';
+        remove.title = '删除词条';
+        remove.addEventListener('click', event => {
+            event.stopPropagation();
+            removePinnedTerm(pin.text);
+        });
+
+        chip.appendChild(text);
+        chip.appendChild(remove);
+        chip.addEventListener('click', () => togglePinnedTerm(pin.text));
+        chip.addEventListener('keydown', event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                event.stopPropagation();
+                togglePinnedTerm(pin.text);
+            }
+        });
+        row.appendChild(chip);
+    }
+
+    const addChip = document.createElement('div');
+    addChip.id = 'st-jets-pin-add';
+    addChip.className = 'st-jets-chip st-jets-chip-add';
+    addChip.title = '添加常驻关键词（如人名）';
+    addChip.setAttribute('role', 'button');
+    addChip.tabIndex = 0;
+    const addIcon = document.createElement('i');
+    addIcon.className = 'fa-solid fa-plus';
+    addChip.appendChild(addIcon);
+    addChip.addEventListener('click', event => {
+        event.stopPropagation();
+        showPinInput(row, addChip);
+    });
+    addChip.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            event.stopPropagation();
+            showPinInput(row, addChip);
+        }
+    });
+    row.appendChild(addChip);
+}
+
+function showPinInput(row, addChip) {
+    if (document.getElementById('st-jets-pin-input')) return;
+    addChip.classList.add('is-hidden');
+
+    const pinInput = document.createElement('input');
+    pinInput.id = 'st-jets-pin-input';
+    pinInput.type = 'text';
+    pinInput.placeholder = '输入词条，回车添加';
+    pinInput.maxLength = 24;
+    pinInput.autocomplete = 'off';
+
+    let closed = false;
+    const cleanup = () => {
+        if (closed) return;
+        closed = true;
+        pinInput.remove();
+        addChip.classList.remove('is-hidden');
+    };
+    const commit = () => {
+        const value = pinInput.value.trim();
+        cleanup();
+        if (value) {
+            addPinnedTerm(value);
+        }
+    };
+
+    pinInput.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            commit();
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            cleanup();
+        }
+        event.stopPropagation();
+    });
+    pinInput.addEventListener('blur', cleanup);
+
+    row.insertBefore(pinInput, addChip);
+    pinInput.focus();
+}
+
+// ===== 设置面板 =====
+
+function toggleSettingsPanel() {
+    const panel = document.getElementById('st-jets-settings');
+    if (!panel) return;
+    const open = panel.classList.toggle('is-open');
+    const toggle = document.getElementById('st-jets-settings-toggle');
+    if (toggle) {
+        toggle.classList.toggle('is-active', open);
+    }
+    if (open) {
+        refreshSettingsPanel();
+    }
+}
+
+function buildSettingsPanel() {
+    const panel = document.createElement('div');
+    panel.id = 'st-jets-settings';
+
+    // 思维链过滤开关
+    const reasoningRow = document.createElement('div');
+    reasoningRow.className = 'st-jets-settings-row';
+    const reasoningLabel = document.createElement('label');
+    reasoningLabel.className = 'st-jets-toggle';
+    const reasoningCheckbox = document.createElement('input');
+    reasoningCheckbox.type = 'checkbox';
+    reasoningCheckbox.id = 'st-jets-reasoning-toggle';
+    const reasoningText = document.createElement('span');
+    reasoningText.textContent = '过滤思维链（不索引 <think>、<thinking> 等推理内容）';
+    reasoningLabel.appendChild(reasoningCheckbox);
+    reasoningLabel.appendChild(reasoningText);
+    reasoningRow.appendChild(reasoningLabel);
+    reasoningCheckbox.addEventListener('change', () => {
+        const settings = getJetsSettings();
+        settings.stripReasoning = reasoningCheckbox.checked;
+        saveJetsSettings();
+        rebuildChatItemsFromCache();
+    });
+
+    // 自定义过滤标签
+    const tagsRow = document.createElement('div');
+    tagsRow.className = 'st-jets-settings-row';
+    const tagsLabel = document.createElement('span');
+    tagsLabel.className = 'st-jets-settings-label';
+    tagsLabel.textContent = '过滤标签';
+    const tagsList = document.createElement('div');
+    tagsList.id = 'st-jets-reasoning-tags';
+    tagsRow.appendChild(tagsLabel);
+    tagsRow.appendChild(tagsList);
+
+    // 索引状态与重建
+    const indexRow = document.createElement('div');
+    indexRow.className = 'st-jets-settings-row';
+    const status = document.createElement('span');
+    status.id = 'st-jets-index-status';
+    status.textContent = '已索引 0 个聊天 · 0 条消息';
+    const rebuildButton = document.createElement('button');
+    rebuildButton.id = 'st-jets-rebuild';
+    rebuildButton.type = 'button';
+    rebuildButton.className = 'st-jets-button';
+    rebuildButton.textContent = '重建索引';
+    rebuildButton.title = '清空本地缓存并重新索引全部聊天';
+    rebuildButton.addEventListener('click', async () => {
+        rebuildButton.disabled = true;
+        rebuildButton.textContent = '重建中…';
+        try {
+            await rebuildChatIndex();
+        } finally {
+            rebuildButton.disabled = false;
+            rebuildButton.textContent = '重建索引';
+        }
+    });
+    indexRow.appendChild(status);
+    indexRow.appendChild(rebuildButton);
+
+    const hint = document.createElement('div');
+    hint.className = 'st-jets-settings-hint';
+    hint.textContent = '首次使用会在后台空闲时逐步索引全部聊天；AI 生成回复期间自动暂停，不影响酒馆性能。';
+
+    panel.appendChild(reasoningRow);
+    panel.appendChild(tagsRow);
+    panel.appendChild(indexRow);
+    panel.appendChild(hint);
+    return panel;
+}
+
+function refreshSettingsPanel() {
+    const settings = getJetsSettings();
+    const checkbox = document.getElementById('st-jets-reasoning-toggle');
+    if (checkbox) {
+        checkbox.checked = !!settings.stripReasoning;
+    }
+    renderReasoningTagChips();
+    updateIndexStatusUi();
+}
+
+function addReasoningTag(tag) {
+    const value = String(tag || '').trim().toLowerCase().slice(0, 20);
+    if (!value) return;
+    const settings = getJetsSettings();
+    if (settings.reasoningTags.includes(value)) return;
+    settings.reasoningTags.push(value);
+    saveJetsSettings();
+    if (settings.stripReasoning) {
+        rebuildChatItemsFromCache();
+    }
+    renderReasoningTagChips();
+}
+
+function removeReasoningTag(tag) {
+    const settings = getJetsSettings();
+    settings.reasoningTags = settings.reasoningTags.filter(item => item !== tag);
+    saveJetsSettings();
+    if (settings.stripReasoning) {
+        rebuildChatItemsFromCache();
+    }
+    renderReasoningTagChips();
+}
+
+function renderReasoningTagChips() {
+    const list = document.getElementById('st-jets-reasoning-tags');
+    if (!list) return;
+    list.innerHTML = '';
+
+    const settings = getJetsSettings();
+    for (const tag of settings.reasoningTags) {
+        const chip = document.createElement('div');
+        chip.className = 'st-jets-chip st-jets-tag is-active';
+        chip.title = '点击移除该过滤标签';
+
+        const text = document.createElement('span');
+        text.className = 'st-jets-chip-text';
+        text.textContent = tag;
+        const remove = document.createElement('span');
+        remove.className = 'st-jets-chip-remove';
+        remove.textContent = '×';
+        remove.title = '移除';
+        remove.addEventListener('click', event => {
+            event.stopPropagation();
+            removeReasoningTag(tag);
+        });
+
+        chip.appendChild(text);
+        chip.appendChild(remove);
+        chip.addEventListener('click', () => removeReasoningTag(tag));
+        list.appendChild(chip);
+    }
+
+    const tagInput = document.createElement('input');
+    tagInput.id = 'st-jets-tag-input';
+    tagInput.type = 'text';
+    tagInput.placeholder = '添加标签';
+    tagInput.maxLength = 20;
+    tagInput.autocomplete = 'off';
+    tagInput.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            const value = tagInput.value.trim();
+            if (value) {
+                addReasoningTag(value);
+                tagInput.value = '';
+            }
+        }
+        event.stopPropagation();
+    });
+    list.appendChild(tagInput);
 }
 
 function initJets() {

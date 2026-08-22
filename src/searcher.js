@@ -85,9 +85,23 @@ export class Searcher {
         return this;
     }
 
-    search(query) {
+    /**
+     * @param {string} query 搜索词
+     * @param {object} [filters]
+     * @param {Set<string>|string[]|null} [filters.types] 允许的条目类型，null 表示全部
+     * @param {string[]} [filters.requiredTerms] 必含关键词（AND 叠加），
+     *   条目必须同时包含每个关键词才会命中；查询词为空时仅按关键词筛选
+     */
+    search(query, { types = null, requiredTerms = [] } = {}) {
         const normalizedQuery = normalizeText(query).trim();
-        if (!normalizedQuery) {
+        const typeSet = types
+            ? (types instanceof Set ? types : new Set(Array.from(types || [])))
+            : null;
+        const terms = (Array.isArray(requiredTerms) ? requiredTerms : [])
+            .map(term => normalizeText(term).trim())
+            .filter(Boolean);
+
+        if (!normalizedQuery && !terms.length) {
             return [];
         }
 
@@ -97,32 +111,66 @@ export class Searcher {
 
         const results = [];
         for (const item of this.items) {
+            if (typeSet && !typeSet.has(item?.type)) {
+                continue;
+            }
+
             const title = item?.title ?? '';
             const content = item?.content ?? '';
 
-            const titleMatches = getMatchPositions(title, normalizedQuery);
-            const contentMatches = getMatchPositions(content, normalizedQuery);
+            let termMatches = [];
+            let termsSatisfied = true;
+            for (const term of terms) {
+                const titleTermMatches = getMatchPositions(title, term);
+                const contentTermMatches = getMatchPositions(content, term);
+                if (!titleTermMatches.length && !contentTermMatches.length) {
+                    termsSatisfied = false;
+                    break;
+                }
+                termMatches = termMatches.concat(
+                    titleTermMatches.map(match => ({ field: 'title', kind: 'term', ...match })),
+                    contentTermMatches.map(match => ({ field: 'content', kind: 'term', ...match })),
+                );
+            }
+            if (!termsSatisfied) {
+                continue;
+            }
 
             let score = 0;
-            if (titleMatches.length > 0) {
-                score += 100 + titleMatches.length * 10;
-            }
-            if (contentMatches.length > 0) {
-                score += 50 + contentMatches.length * 5;
-            }
+            const matches = [];
 
-            if (score === 0) {
-                const lowerTitle = normalizeText(title);
-                const lowerContent = normalizeText(content);
-                if (isSubsequence(normalizedQuery, lowerTitle)) {
-                    score = 30;
-                } else if (isSubsequence(normalizedQuery, lowerContent)) {
-                    score = 15;
+            if (normalizedQuery) {
+                const titleMatches = getMatchPositions(title, normalizedQuery);
+                const contentMatches = getMatchPositions(content, normalizedQuery);
+
+                if (titleMatches.length > 0) {
+                    score += 100 + titleMatches.length * 10;
                 }
-            }
+                if (contentMatches.length > 0) {
+                    score += 50 + contentMatches.length * 5;
+                }
 
-            if (score <= 0) {
-                continue;
+                if (score === 0) {
+                    const lowerTitle = normalizeText(title);
+                    const lowerContent = normalizeText(content);
+                    if (isSubsequence(normalizedQuery, lowerTitle)) {
+                        score = 30;
+                    } else if (isSubsequence(normalizedQuery, lowerContent)) {
+                        score = 15;
+                    }
+                }
+
+                if (score <= 0) {
+                    continue;
+                }
+
+                matches.push(
+                    ...titleMatches.map(match => ({ field: 'title', kind: 'query', ...match })),
+                    ...contentMatches.map(match => ({ field: 'content', kind: 'query', ...match })),
+                );
+            } else {
+                // 无查询词：仅按关键词筛选，命中次数越多越靠前
+                score = 40 + Math.min(60, termMatches.length);
             }
 
             if (getExtraScore) {
@@ -135,11 +183,7 @@ export class Searcher {
                 }
             }
 
-            const matches = [
-                ...titleMatches.map(match => ({ field: 'title', ...match })),
-                ...contentMatches.map(match => ({ field: 'content', ...match })),
-            ];
-
+            matches.push(...termMatches);
             results.push({ item, score, matches });
         }
 

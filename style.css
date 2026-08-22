@@ -17,6 +17,8 @@
     position: absolute;
     inset: 0;
     background: rgba(0, 0, 0, 0.45);
+    cursor: pointer;
+    touch-action: none;
 }
 
 #st-jets-modal {
@@ -33,6 +35,44 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+}
+
+#st-jets-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#st-jets-header #st-jets-input {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+#st-jets-close {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(0, 0, 0, 0.35);
+    color: inherit;
+    font-size: 18px;
+    cursor: pointer;
+    opacity: 0.65;
+    user-select: none;
+    touch-action: manipulation;
+    transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+#st-jets-close:hover,
+#st-jets-close:focus-visible,
+#st-jets-close:active {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.12);
+    outline: none;
 }
 
 #st-jets-input {
@@ -52,9 +92,13 @@
 
 #st-jets-results {
     display: none;
+    flex: 1 1 auto;
+    min-height: 0;
     max-height: 50vh;
     overflow: auto;
     padding-right: 4px;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
 }
 
 #st-jets-results.is-visible {
@@ -139,6 +183,247 @@
     transition: outline 0.2s ease;
 }
 
+/* ===== 工具栏：分类 / 常驻词条 chips ===== */
+
+#st-jets-toolbar {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.st-jets-chip-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    padding-bottom: 2px;
+    touch-action: pan-x;
+}
+
+.st-jets-chip-row::-webkit-scrollbar {
+    display: none;
+}
+
+.st-jets-pin-rowlabel {
+    flex: 0 0 auto;
+    font-size: 11px;
+    opacity: 0.5;
+    padding: 0 2px;
+}
+
+.st-jets-chip {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 28px;
+    padding: 0 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.04);
+    color: inherit;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    opacity: 0.6;
+    transition: opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.st-jets-chip:hover {
+    opacity: 0.9;
+}
+
+.st-jets-chip.is-active {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.35);
+}
+
+/* 常驻词条：启用时青色高亮（与结果中的关键词高亮同色），停用时暗淡 */
+.st-jets-pin.is-active {
+    background: rgba(94, 234, 212, 0.14);
+    border-color: rgba(94, 234, 212, 0.55);
+    box-shadow: 0 0 0 1px rgba(94, 234, 212, 0.18);
+}
+
+.st-jets-chip.is-hidden {
+    display: none;
+}
+
+.st-jets-chip-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    margin-right: -6px;
+    border-radius: 50%;
+    font-size: 13px;
+    opacity: 0.55;
+    transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.st-jets-chip-remove:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.18);
+}
+
+.st-jets-chip-add {
+    padding: 0 10px;
+    background: transparent;
+    border-style: dashed;
+}
+
+#st-jets-pin-input {
+    flex: 0 0 auto;
+    width: 130px;
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(94, 234, 212, 0.55);
+    background: rgba(0, 0, 0, 0.35);
+    color: inherit;
+    font-size: 12px;
+    outline: none;
+}
+
+/* ===== 设置面板 ===== */
+
+#st-jets-settings-toggle {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(0, 0, 0, 0.35);
+    color: inherit;
+    font-size: 17px;
+    cursor: pointer;
+    opacity: 0.65;
+    user-select: none;
+    touch-action: manipulation;
+    transition: opacity 0.15s ease, background 0.15s ease, transform 0.25s ease;
+}
+
+#st-jets-settings-toggle:hover,
+#st-jets-settings-toggle:focus-visible,
+#st-jets-settings-toggle:active,
+#st-jets-settings-toggle.is-active {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.12);
+    outline: none;
+}
+
+#st-jets-settings-toggle.is-active {
+    transform: rotate(45deg);
+}
+
+#st-jets-settings {
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.25);
+}
+
+#st-jets-settings.is-open {
+    display: flex;
+}
+
+.st-jets-settings-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    font-size: 13px;
+}
+
+.st-jets-settings-label {
+    flex: 0 0 auto;
+    font-size: 12px;
+    opacity: 0.6;
+}
+
+.st-jets-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.st-jets-toggle input[type='checkbox'] {
+    accent-color: #5eead4;
+    width: 15px;
+    height: 15px;
+    cursor: pointer;
+}
+
+#st-jets-reasoning-tags {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+#st-jets-tag-input {
+    width: 90px;
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(0, 0, 0, 0.35);
+    color: inherit;
+    font-size: 12px;
+    outline: none;
+}
+
+#st-jets-tag-input:focus {
+    border-color: rgba(255, 255, 255, 0.4);
+}
+
+.st-jets-button {
+    flex: 0 0 auto;
+    height: 30px;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.08);
+    color: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.st-jets-button:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.16);
+}
+
+.st-jets-button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.st-jets-settings-hint {
+    font-size: 11px;
+    opacity: 0.45;
+    line-height: 1.5;
+}
+
+/* 常驻关键词命中高亮（查询词高亮保持琥珀色） */
+.st-jets-highlight-term {
+    background: rgba(94, 234, 212, 0.32);
+}
+
 #st-jets-mobile-button {
     display: inline-flex;
     align-items: center;
@@ -166,9 +451,39 @@
         padding: 14px;
     }
 
+    #st-jets-close {
+        width: 44px;
+        height: 44px;
+        font-size: 20px;
+    }
+
+    #st-jets-settings-toggle {
+        width: 44px;
+        height: 44px;
+        font-size: 19px;
+    }
+
     #st-jets-input {
         padding: 12px 14px;
         font-size: 16px;
+    }
+
+    .st-jets-chip {
+        height: 34px;
+        padding: 0 14px;
+        font-size: 13px;
+    }
+
+    .st-jets-chip-remove {
+        width: 20px;
+        height: 20px;
+        font-size: 15px;
+    }
+
+    #st-jets-pin-input {
+        height: 34px;
+        width: 150px;
+        font-size: 13px;
     }
 
     #st-jets-results {

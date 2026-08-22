@@ -1,5 +1,6 @@
 export { Searcher } from './searcher.js';
 export { Indexer } from './indexer.js';
+export { JetsCache, jetsCache } from './cache.js';
 export { CharacterSource } from './sources/characters.js';
 export { WorldInfoSource } from './sources/worldinfo.js';
 export { PresetSource } from './sources/presets.js';
