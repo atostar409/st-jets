@@ -1,5 +1,6 @@
 import { toggleDrawer } from '../../../utils.js';
-import { extension_settings, saveSettingsDebounced } from '../../../script.js';
+import { extension_settings } from '../../../extensions.js';
+import { saveSettingsDebounced } from '../../../../script.js';
 import {
     Searcher,
     DataLoader,
@@ -1303,20 +1304,36 @@ function ensureDom() {
     input.addEventListener('input', handleSearchInput);
 }
 
-function ensureMobileEntry() {
-    if (document.getElementById('st-jets-mobile-button')) {
+function ensureOptionsMenuEntry() {
+    if (document.getElementById('option_st_jets')) {
         return;
     }
-    const topSettings = document.getElementById('top-settings-holder');
-    const topBar = document.getElementById('top-bar');
-    const host = topSettings || topBar;
-    if (!host) return;
-    const button = document.createElement('div');
-    button.id = 'st-jets-mobile-button';
-    button.className = 'drawer-icon fa-solid fa-magnifying-glass';
-    button.title = '搜索 (JETS)';
-    button.addEventListener('click', toggleJets);
-    host.appendChild(button);
+    const menu = document.querySelector('#options .options-content');
+    if (!menu) return;
+
+    const divider = document.createElement('hr');
+
+    const item = document.createElement('a');
+    item.id = 'option_st_jets';
+    item.title = '打开 JETS 全局搜索 (Alt+K)';
+
+    const icon = document.createElement('i');
+    icon.className = 'fa-lg fa-solid fa-magnifying-glass';
+    const label = document.createElement('span');
+    label.textContent = '全局搜索 (JETS)';
+
+    item.appendChild(icon);
+    item.appendChild(label);
+    item.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const optionsMenu = document.getElementById('options');
+        if (optionsMenu) optionsMenu.style.display = 'none';
+        openJets();
+    });
+
+    menu.appendChild(divider);
+    menu.appendChild(item);
 }
 
 function openJets() {
@@ -2385,7 +2402,7 @@ function initJets() {
     window.__stJetsInitialized = true;
     registerTestApi();
     ensureDom();
-    ensureMobileEntry();
+    ensureOptionsMenuEntry();
     ensureDataLoaded();
     bindLiveChatIndexing();
     document.addEventListener('keydown', handleGlobalKeydown, true);
