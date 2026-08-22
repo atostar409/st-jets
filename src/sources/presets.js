@@ -59,21 +59,46 @@ export class PresetSource {
         return String(preset?.name || this.presetNames[index] || '').trim();
     }
 
+    // 与世界书同构的两级结构：带 prompts[] 的预设（对话补全）展开成 prompt 级条目，
+    // 挂载预设后搜索指向的就是这些条目；其余类型（采样器/模板/推理）整本一条
     toIndexItems() {
-        return this.presets
-            .map((preset, index) => ({ preset, index, name: this.nameAt(index, preset) }))
-            .filter(entry => entry.name)
-            .map(({ preset, index, name }) => ({
+        const items = [];
+        for (const { preset, index, name } of this.presets
+            .map((entry, entryIndex) => ({ preset: entry, index: entryIndex, name: this.nameAt(entryIndex, entry) }))
+            .filter(entry => entry.name)) {
+            const baseMetadata = {
+                presetType: this.presetType,
+                presetName: name,
+                presetIndex: index,
+            };
+
+            if (Array.isArray(preset?.prompts) && preset.prompts.length) {
+                let expanded = 0;
+                preset.prompts.forEach((prompt, promptIndex) => {
+                    const title = String(prompt?.name || '').trim();
+                    const content = String(prompt?.content || '').trim();
+                    if (!title && !content) return;
+                    items.push({
+                        id: `preset-${this.presetType}-${name}-${promptIndex}`,
+                        type: 'preset',
+                        title: title || `Prompt ${promptIndex + 1}`,
+                        content,
+                        metadata: { ...baseMetadata, promptIndex },
+                    });
+                    expanded += 1;
+                });
+                if (expanded) continue;
+            }
+
+            items.push({
                 id: `preset-${this.presetType}-${name}`,
                 type: 'preset',
                 title: name,
                 content: this.extractContent(preset),
-                metadata: {
-                    presetType: this.presetType,
-                    presetName: name,
-                    presetIndex: index,
-                },
-            }));
+                metadata: { ...baseMetadata },
+            });
+        }
+        return items;
     }
 
     extractContent(preset) {
@@ -111,14 +136,6 @@ export class PresetSource {
         }
         if (data.description) {
             pushText(data.description);
-        }
-
-        if (Array.isArray(preset?.prompts)) {
-            // 对话补全预设：每条 prompt 的名字和正文都进索引，名字方便搜到具体条目
-            preset.prompts.forEach(prompt => {
-                pushText(prompt?.name);
-                pushText(prompt?.content);
-            });
         }
 
         if (preset?.utilityPrompts && typeof preset.utilityPrompts === 'object') {

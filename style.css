@@ -43,7 +43,7 @@
     gap: 8px;
 }
 
-#st-jets-header #st-jets-input {
+#st-jets-header #st-jets-input-shell {
     flex: 1 1 auto;
     min-width: 0;
 }
@@ -75,19 +75,36 @@
     outline: none;
 }
 
-#st-jets-input {
-    width: 100%;
+/* 搜索框外壳：盒子样式在这里。挂载 tokens 与输入文本同处一盒——
+   挂载进来的书 / 预设是搜索内容的一部分，不是外部筛选器 */
+#st-jets-input-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
     padding: 10px 12px;
     border-radius: 8px;
     border: 1px solid rgba(255, 255, 255, 0.12);
     background: rgba(0, 0, 0, 0.35);
-    color: inherit;
-    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-#st-jets-input:focus {
+#st-jets-input-shell:focus-within {
     border-color: rgba(255, 255, 255, 0.35);
     box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1);
+}
+
+#st-jets-scope {
+    gap: 4px;
+}
+
+#st-jets-input {
+    width: 100%;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: inherit;
+    outline: none;
 }
 
 #st-jets-results {
@@ -466,8 +483,11 @@
         font-size: 19px;
     }
 
-    #st-jets-input {
+    #st-jets-input-shell {
         padding: 12px 14px;
+    }
+
+    #st-jets-input {
         font-size: 16px;
     }
 
@@ -603,12 +623,12 @@
 
 /* —— 可读性保障：文字所在的区域铺半透明「玻璃片」，星景只透在留白处 —— */
 
-#st-jets-container.st-jets-theme-galaxy #st-jets-input {
+#st-jets-container.st-jets-theme-galaxy #st-jets-input-shell {
     background: rgba(9, 12, 30, 0.55);
     border-color: rgba(255, 255, 255, 0.2);
 }
 
-#st-jets-container.st-jets-theme-galaxy #st-jets-input:focus {
+#st-jets-container.st-jets-theme-galaxy #st-jets-input-shell:focus-within {
     border-color: rgba(165, 180, 252, 0.55);
     box-shadow: 0 0 0 2px rgba(165, 180, 252, 0.18);
 }
@@ -685,7 +705,7 @@
     user-select: none;
 }
 
-/* ===== 世界书两级搜索：书级行 / 挂载范围 / 书内小节 ===== */
+/* ===== 挂载范围（二级搜索）：容器级行 / 搜索框内 tokens ===== */
 
 .st-jets-group-hint {
     margin-left: 8px;
@@ -695,14 +715,29 @@
     opacity: 0.85;
 }
 
-.st-jets-book-row .st-jets-result-title {
+.st-jets-book-row .st-jets-result-title,
+.st-jets-preset-row .st-jets-result-title {
     display: flex;
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
 }
 
-/* 命中数徽标：世界书分类同色（紫） */
+/* 挂载专属色：橙色——与三个分类色（天蓝 / 紫 / 玫红）全部拉开辨识度 */
+.st-jets-scope-chip {
+    --st-jets-chip-color: #fdba74;
+    height: 22px;
+    padding: 0 8px;
+    font-size: 11px;
+}
+
+.st-jets-scope-chip .st-jets-chip-text {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 命中数徽标：与挂载 tokens 同色，点击即挂载的容器行都用它 */
 .st-jets-book-count {
     display: inline-flex;
     align-items: center;
@@ -712,9 +747,25 @@
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.02em;
-    color: #c4b5fd;
-    background: rgba(196, 181, 253, 0.12);
-    border: 1px solid rgba(196, 181, 253, 0.35);
+    color: #fdba74;
+    background: rgba(253, 186, 116, 0.12);
+    border: 1px solid rgba(253, 186, 116, 0.35);
+    user-select: none;
+}
+
+/* 预设行的管理器标签：中性灰，标注「对话补全 / 文本补全 / …」 */
+.st-jets-preset-tag {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: rgba(255, 255, 255, 0.6);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.16);
     user-select: none;
 }
 

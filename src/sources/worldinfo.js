@@ -48,7 +48,10 @@ export class WorldInfoSource {
                 const { name } = list[index];
                 try {
                     // POST /api/worldinfo/get { name } -> 世界书原始 JSON
-                    fullBooks[index] = await postJson('/api/worldinfo/get', { name });
+                    // 书文件本体大多没有顶层 name 字段（书名就是文件名，只存在 list 接口里），
+                    // 必须把 list 里的名字合并进书对象，否则索引条目全部变成「未命名」
+                    const raw = await postJson('/api/worldinfo/get', { name });
+                    fullBooks[index] = { ...raw, name };
                 } catch (err) {
                     console.warn('WorldInfoSource.load: 获取世界书失败', name, err);
                 }

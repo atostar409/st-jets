@@ -623,26 +623,63 @@ function getEnabledPinnedTerms() {
     return getPinnedTerms().filter(term => term.enabled).map(term => term.text);
 }
 
-// ===== 世界书挂载范围（两级搜索）=====
-// 一本世界书动辄上千条目、一个人几十本书，逐条平铺必乱。
-// 未挂书：条目命中聚合成「一本书一行」，点书名挂载；
-// 挂了书：搜索只指向挂载书的条目，× 移除恢复全书搜索。会话级状态，不持久化。
-const worldScope = new Set();
+// ===== 挂载范围（二级搜索，世界书与预设同规则）=====
+// 未挂载：世界书聚合出书级行、预设聚合出预设行（内容只搜「正在使用」的预设），
+// 点名称把容器「挂」进搜索栏；挂载后搜索只指向挂载容器内的条目（书内条目 / 预设内 prompt）。
+// 会话级状态，不持久化。
+const searchScope = []; // [{ kind: 'worldinfo' | 'preset', name, presetType? }]
 const WORLDINFO_ONLY_TYPES = new Set(['worldinfo']);
+const PRESET_ONLY_TYPES = new Set(['preset']);
+const PRESET_MANAGER_LABELS = {
+    context: '上下文',
+    instruct: '指令',
+    sysprompt: '系统提示',
+    openai: '对话补全',
+    textgenerationwebui: '文本补全',
+    kobold: 'KoboldAI',
+    novel: 'NovelAI',
+    reasoning: '推理模板',
+};
 
-function mountWorldBook(name) {
-    const bookName = String(name || '').trim();
-    if (!bookName) return;
-    worldScope.add(bookName);
-    renderWorldScopeChips();
-    rerunSearchIfOpen();
+function scopeEntryKey(entry) {
+    return entry?.kind === 'preset'
+        ? `preset::${entry.presetType}::${entry.name}`
+        : `worldinfo::${entry?.name}`;
 }
 
-function unmountWorldBook(name) {
-    if (worldScope.delete(String(name || ''))) {
-        renderWorldScopeChips();
-        rerunSearchIfOpen();
+function getScopeBooks() {
+    return new Set(searchScope.filter(entry => entry.kind === 'worldinfo').map(entry => entry.name));
+}
+
+function getScopePresetKeys() {
+    return new Set(searchScope
+        .filter(entry => entry.kind === 'preset')
+        .map(entry => `${entry.presetType}::${entry.name}`));
+}
+
+function mountScopeToken(entry) {
+    const name = String(entry?.name || '').trim();
+    if (!name) return;
+    const token = entry.kind === 'preset'
+        ? { kind: 'preset', name, presetType: entry.presetType || '' }
+        : { kind: 'worldinfo', name };
+    if (!searchScope.some(existing => scopeEntryKey(existing) === scopeEntryKey(token))) {
+        searchScope.push(token);
     }
+    renderScopeChips();
+    rerunSearchIfOpen();
+    // 挂载即进入二级搜索：直接聚焦输入框，接着输内容就行
+    if (input && document.activeElement !== input) {
+        input.focus();
+    }
+}
+
+function unmountScopeToken(key) {
+    const index = searchScope.findIndex(entry => scopeEntryKey(entry) === key);
+    if (index === -1) return;
+    searchScope.splice(index, 1);
+    renderScopeChips();
+    rerunSearchIfOpen();
 }
 
 function getIndexedWorldBookNames() {
@@ -653,6 +690,24 @@ function getIndexedWorldBookNames() {
         }
     }
     return names;
+}
+
+function getIndexedPresetNames() {
+    const names = new Set();
+    for (const item of searcher.items) {
+        if (item?.type === 'preset' && item?.metadata?.presetName) {
+            names.add(`${item.metadata.presetType}::${item.metadata.presetName}`);
+        }
+    }
+    return names;
+}
+
+function isActivePresetMeta(presetType, presetName, presetIndex) {
+    return isActivePresetItem({
+        type: 'preset',
+        title: presetName,
+        metadata: { presetType, presetName, presetIndex },
+    });
 }
 
 // 把条目级命中按书聚合：命中数、最高分、前几条目目做预览；书名直接命中的书也列出
@@ -687,6 +742,65 @@ function aggregateWorldBooks(entryResults, query) {
         if (b.results.length !== a.results.length) return b.results.length - a.results.length;
         if (b.bestScore !== a.bestScore) return b.bestScore - a.bestScore;
         return a.name.localeCompare(b.name);
+    });
+    return list;
+}
+
+// 预设行聚合：使用中的预设排最前（带徽标），其余靠名字命中挂载
+function aggregatePresetEntries(entryResults, query) {
+    const groups = new Map();
+    for (const result of entryResults) {
+        const { presetType, presetName, presetIndex } = result.item?.metadata || {};
+        if (!presetName) continue;
+        const key = `${presetType}::${presetName}`;
+        if (!groups.has(key)) {
+            groups.set(key, {
+                key,
+                presetType: presetType || '',
+                presetName,
+                presetIndex,
+                results: [],
+                bestScore: 0,
+                nameMatch: false,
+            });
+        }
+        const group = groups.get(key);
+        group.results.push(result);
+        group.bestScore = Math.max(group.bestScore, result.score || 0);
+    }
+
+    const normalizedQuery = String(query || '').trim().toLowerCase();
+    if (normalizedQuery) {
+        for (const key of getIndexedPresetNames()) {
+            const separator = key.indexOf('::');
+            const presetName = key.slice(separator + 2);
+            if (!presetName.toLowerCase().includes(normalizedQuery)) continue;
+            if (groups.has(key)) {
+                groups.get(key).nameMatch = true;
+            } else {
+                const presetType = key.slice(0, separator);
+                groups.set(key, {
+                    key,
+                    presetType,
+                    presetName,
+                    presetIndex: NaN,
+                    results: [],
+                    bestScore: 0,
+                    nameMatch: true,
+                });
+            }
+        }
+    }
+
+    const list = [...groups.values()];
+    list.sort((a, b) => {
+        const activeA = isActivePresetMeta(a.presetType, a.presetName, a.presetIndex) ? 1 : 0;
+        const activeB = isActivePresetMeta(b.presetType, b.presetName, b.presetIndex) ? 1 : 0;
+        if (activeA !== activeB) return activeB - activeA;
+        if (a.nameMatch !== b.nameMatch) return a.nameMatch ? -1 : 1;
+        if (b.results.length !== a.results.length) return b.results.length - a.results.length;
+        if (b.bestScore !== a.bestScore) return b.bestScore - a.bestScore;
+        return a.presetName.localeCompare(b.presetName);
     });
     return list;
 }
@@ -1466,7 +1580,20 @@ function ensureDom() {
         }
     });
 
-    header.appendChild(input);
+    // 搜索框外壳：挂载 tokens 与输入文本同处一盒——挂载的内容属于搜索的一部分
+    const inputShell = document.createElement('div');
+    inputShell.id = 'st-jets-input-shell';
+
+    // 挂载 tokens 行：没挂任何范围时整行隐藏
+    const scopeRow = document.createElement('div');
+    scopeRow.id = 'st-jets-scope';
+    scopeRow.className = 'st-jets-chip-row';
+    scopeRow.hidden = true;
+
+    inputShell.appendChild(scopeRow);
+    inputShell.appendChild(input);
+
+    header.appendChild(inputShell);
     header.appendChild(settingsButton);
     header.appendChild(closeButton);
 
@@ -1477,18 +1604,11 @@ function ensureDom() {
     categoriesRow.id = 'st-jets-categories';
     categoriesRow.className = 'st-jets-chip-row';
 
-    // 世界书挂载范围行：没挂书时整行隐藏，挂了才出现（渐进披露，不占常驻空间）
-    const scopeRow = document.createElement('div');
-    scopeRow.id = 'st-jets-scope';
-    scopeRow.className = 'st-jets-chip-row';
-    scopeRow.hidden = true;
-
     const pinsRow = document.createElement('div');
     pinsRow.id = 'st-jets-pins';
     pinsRow.className = 'st-jets-chip-row';
 
     toolbar.appendChild(categoriesRow);
-    toolbar.appendChild(scopeRow);
     toolbar.appendChild(pinsRow);
 
     const settingsPanel = buildSettingsPanel();
@@ -1505,7 +1625,7 @@ function ensureDom() {
     container.appendChild(modal);
     document.body.appendChild(container);
     applyJetsTheme();
-    renderWorldScopeChips();
+    renderScopeChips();
 
     overlay.addEventListener('click', closeJets);
     overlay.addEventListener('pointerdown', event => {
@@ -1612,7 +1732,7 @@ function handleSearchInput() {
         clearTimeout(searchTimer);
     }
     const query = input.value.trim();
-    if (!query && !getEnabledPinnedTerms().length && !worldScope.size) {
+    if (!query && !getEnabledPinnedTerms().length && !searchScope.length) {
         clearResults();
         hideResults();
         return;
@@ -1632,7 +1752,7 @@ function runSearch() {
     activePresetSnapshot = snapshotActivePresets();
     const query = input.value.trim();
     const pins = getEnabledPinnedTerms();
-    if (!query && !pins.length && !worldScope.size) {
+    if (!query && !pins.length && !searchScope.length) {
         clearResults();
         hideResults();
         return;
@@ -1644,17 +1764,26 @@ function runSearch() {
 
     const activeTypes = getActiveTypes();
     const worldinfoActive = !activeTypes || activeTypes.has('worldinfo');
-    const scoped = worldScope.size > 0;
+    const presetActive = !activeTypes || activeTypes.has('preset');
+    const scopeBooks = getScopeBooks();
+    const scopePresetKeys = getScopePresetKeys();
 
-    // 世界书两级搜索：主搜索用预过滤把世界书条目摘出去单独处理。
-    // 未挂书 → 聚合成书级行；挂了书 → 只放行挂载书的条目，其余类型不受影响
-    const itemFilter = scoped
-        ? item => item.type !== 'worldinfo' || worldScope.has(item?.metadata?.bookName || '')
-        : item => item.type !== 'worldinfo';
+    // 两级搜索：世界书 / 预设未挂载时不出条目级行（走下面的容器聚合），
+    // 挂载后只放行挂载容器内的条目，其余类型不受影响
+    const itemFilter = item => {
+        if (item.type === 'worldinfo') {
+            return scopeBooks.size > 0 && scopeBooks.has(item?.metadata?.bookName || '');
+        }
+        if (item.type === 'preset') {
+            return scopePresetKeys.size > 0
+                && scopePresetKeys.has(`${item?.metadata?.presetType}::${item?.metadata?.presetName}`);
+        }
+        return true;
+    };
     let found = searcher.search(query, { types: activeTypes, requiredTerms: pins, filter: itemFilter });
 
     let worldBookGroups = null;
-    if (worldinfoActive && !scoped) {
+    if (worldinfoActive && !scopeBooks.size) {
         // 不设上限：命中数要按书完整统计，被 maxResults 截断就数错了
         const entryResults = searcher.search(query, {
             types: WORLDINFO_ONLY_TYPES,
@@ -1664,14 +1793,27 @@ function runSearch() {
         worldBookGroups = aggregateWorldBooks(entryResults, query);
     }
 
-    if (!found.length && !worldBookGroups?.length && query.length <= 1 && !scoped) {
+    let presetGroups = null;
+    if (presetActive && !scopePresetKeys.size) {
+        // 未挂载时预设内容只搜「正在使用」的，其余预设靠名字找到后挂载再搜
+        const entryResults = searcher.search(query, {
+            types: PRESET_ONLY_TYPES,
+            requiredTerms: pins,
+            filter: isActivePresetItem,
+            maxResults: Infinity,
+        });
+        presetGroups = aggregatePresetEntries(entryResults, query);
+    }
+
+    const hasGroups = !!worldBookGroups?.length || !!presetGroups?.length;
+    if (!found.length && !hasGroups && query.length <= 1 && !searchScope.length) {
         const typeSet = activeTypes;
         const fallbackItems = [...STATIC_ITEMS]
             .filter(item => !typeSet || typeSet.has(item.type));
         const limit = searcher.options?.maxResults || 50;
         found = fallbackItems.slice(0, limit).map(item => ({ item, score: 0, matches: [] }));
     }
-    renderResults(found, worldBookGroups);
+    renderResults(found, worldBookGroups, presetGroups);
     showResults();
 }
 
@@ -1839,16 +1981,14 @@ function appendHighlightedText(container, text, ranges, { prefix = '', suffix = 
     if (suffix) container.appendChild(document.createTextNode(suffix));
 }
 
-function renderResults(found, worldBookGroups = null) {
+function renderResults(found, worldBookGroups = null, presetGroups = null) {
     clearResults();
 
-    if (!found.length && !worldBookGroups?.length) {
+    if (!found.length && !worldBookGroups?.length && !presetGroups?.length) {
         const empty = document.createElement('div');
         empty.className = 'st-jets-empty';
-        empty.textContent = worldScope.size
-            ? (worldScope.size === 1
-                ? `已挂载《${[...worldScope][0]}》，输入关键词即只搜这本书的条目`
-                : `已挂载 ${worldScope.size} 本世界书，输入关键词即在这些书内搜索`)
+        empty.textContent = searchScope.length
+            ? `已挂载 ${searchScope.length} 项范围（${searchScope.slice(0, 2).map(entry => entry.name).join('、')}${searchScope.length > 2 ? ' 等' : ''}），输入关键词即在其中搜索`
             : !getJetsSettings().categories.length
                 ? '没有点亮任何分类，点「全部」或具体分类开始搜索'
                 : getEnabledPinnedTerms().length
@@ -1867,23 +2007,32 @@ function renderResults(found, worldBookGroups = null) {
         grouped.get(type).push(result);
     }
 
-    const order = ['character', 'chat', 'chat_message', 'worldinfo_book', 'worldinfo', 'preset', 'settings', 'quickreply', 'regex', 'other'];
+    const scopeBookEntries = searchScope.filter(entry => entry.kind === 'worldinfo');
+    const scopePresetEntries = searchScope.filter(entry => entry.kind === 'preset');
+
+    const order = ['character', 'chat', 'chat_message', 'worldinfo_book', 'worldinfo', 'preset_book', 'preset', 'settings', 'quickreply', 'regex', 'other'];
     for (const type of order) {
         const isBookGroup = type === 'worldinfo_book';
-        if (isBookGroup ? !(worldBookGroups && worldBookGroups.length) : !grouped.has(type)) {
-            continue;
-        }
+        const isPresetGroup = type === 'preset_book';
+        const hasGroup = isBookGroup
+            ? !!(worldBookGroups && worldBookGroups.length)
+            : isPresetGroup
+                ? !!(presetGroups && presetGroups.length)
+                : grouped.has(type);
+        if (!hasGroup) continue;
 
         const header = document.createElement('div');
         header.className = 'st-jets-group-header';
         if (isBookGroup) {
             header.textContent = TYPE_LABELS.worldinfo;
-            const hint = document.createElement('span');
-            hint.className = 'st-jets-group-hint';
-            hint.textContent = '点书名挂载 · 挂载后只搜该书条目';
-            header.appendChild(hint);
-        } else if (type === 'worldinfo' && worldScope.size === 1) {
-            header.textContent = `世界书 ·《${[...worldScope][0]}》`;
+            appendGroupHint(header, '点书名挂载 · 挂载后只搜该书条目');
+        } else if (isPresetGroup) {
+            header.textContent = TYPE_LABELS.preset;
+            appendGroupHint(header, '默认只搜使用中的预设 · 点名称挂载');
+        } else if (type === 'worldinfo' && scopeBookEntries.length === 1) {
+            header.textContent = `世界书 ·《${scopeBookEntries[0].name}》`;
+        } else if (type === 'preset' && scopePresetEntries.length === 1) {
+            header.textContent = `预设 · ${scopePresetEntries[0].name}`;
         } else {
             header.textContent = TYPE_LABELS[type] || type;
         }
@@ -1893,14 +2042,37 @@ function renderResults(found, worldBookGroups = null) {
             appendWorldBookRows(worldBookGroups);
             continue;
         }
-        if (type === 'worldinfo' && worldScope.size > 1) {
-            appendScopedWorldEntries(grouped.get(type));
+        if (isPresetGroup) {
+            appendPresetRows(presetGroups);
+            continue;
+        }
+        if (type === 'worldinfo' && scopeBookEntries.length > 1) {
+            appendScopedSections(
+                grouped.get(type),
+                scopeBookEntries,
+                result => `worldinfo::${result.item?.metadata?.bookName || ''}`,
+            );
+            continue;
+        }
+        if (type === 'preset' && scopePresetEntries.length > 1) {
+            appendScopedSections(
+                grouped.get(type),
+                scopePresetEntries,
+                result => `preset::${result.item?.metadata?.presetType}::${result.item?.metadata?.presetName}`,
+            );
             continue;
         }
         for (const result of grouped.get(type)) {
             appendResultRow(result);
         }
     }
+}
+
+function appendGroupHint(header, text) {
+    const hint = document.createElement('span');
+    hint.className = 'st-jets-group-hint';
+    hint.textContent = text;
+    header.appendChild(hint);
 }
 
 // 书级行：一本一行，命中数徽标 + 前几条目目预览；点击 = 挂载（不跳转、不关弹窗）
@@ -1952,29 +2124,104 @@ function appendWorldBookRows(groups) {
 
         row.appendChild(title);
         row.appendChild(subtitle);
-        row.addEventListener('click', () => mountWorldBook(group.name));
+        row.addEventListener('click', () => mountScopeToken({ kind: 'worldinfo', name: group.name }));
 
         results.appendChild(row);
         currentResults.push({ result: pseudoResult, element: row });
     }
 }
 
-// 多本挂载时按书分小节（书序 = 挂载顺序），节内保持分数排序
-function appendScopedWorldEntries(resultList) {
-    const byBook = new Map();
-    for (const name of worldScope) {
-        byBook.set(name, []);
+// 预设级行：名称 + 管理器标签 + 使用中徽标 + 命中数，点击挂载
+function appendPresetRows(groups) {
+    const limit = 50;
+    for (const group of groups.slice(0, limit)) {
+        const pseudoResult = {
+            item: {
+                id: `presetbook-${group.key}`,
+                type: 'preset_book',
+                title: group.presetName,
+                content: '',
+                metadata: { presetName: group.presetName, presetType: group.presetType },
+            },
+            score: group.bestScore,
+            matches: [],
+        };
+
+        const row = document.createElement('div');
+        row.className = 'st-jets-result-item st-jets-preset-row';
+        row.dataset.type = 'preset_book';
+
+        const title = document.createElement('div');
+        title.className = 'st-jets-result-title';
+        const name = document.createElement('span');
+        name.className = 'st-jets-preset-name';
+        name.textContent = group.presetName;
+        title.appendChild(name);
+
+        const tag = document.createElement('span');
+        tag.className = 'st-jets-preset-tag';
+        tag.textContent = PRESET_MANAGER_LABELS[group.presetType] || group.presetType || '';
+        title.appendChild(tag);
+
+        if (isActivePresetMeta(group.presetType, group.presetName, group.presetIndex)) {
+            const activeBadge = document.createElement('span');
+            activeBadge.className = 'st-jets-active-badge';
+            activeBadge.textContent = '使用中';
+            title.appendChild(activeBadge);
+        }
+
+        const badge = document.createElement('span');
+        badge.className = 'st-jets-book-count';
+        badge.textContent = group.nameMatch && !group.results.length
+            ? '名称匹配'
+            : `${group.results.length} 条命中`;
+        title.appendChild(badge);
+
+        const subtitle = document.createElement('div');
+        subtitle.className = 'st-jets-result-subtitle st-jets-book-preview';
+        if (group.results.length) {
+            const preview = group.results
+                .slice(0, 3)
+                .map(result => result.item?.title || '')
+                .filter(Boolean)
+                .join(' · ');
+            subtitle.textContent = group.results.length > 3 ? `含 ${preview} 等` : `含 ${preview}`;
+        } else {
+            subtitle.textContent = '挂载后在预设内搜索内容';
+        }
+
+        row.appendChild(title);
+        row.appendChild(subtitle);
+        row.addEventListener('click', () => mountScopeToken({
+            kind: 'preset',
+            name: group.presetName,
+            presetType: group.presetType,
+        }));
+
+        results.appendChild(row);
+        currentResults.push({ result: pseudoResult, element: row });
+    }
+}
+
+// 多项挂载时按容器分小节（容器序 = 挂载顺序），节内保持分数排序；世界书 / 预设共用
+function appendScopedSections(resultList, containers, resultKeyOf) {
+    const byContainer = new Map();
+    for (const container of containers) {
+        byContainer.set(scopeEntryKey(container), []);
     }
     const orphans = [];
     for (const result of resultList) {
-        const name = result.item?.metadata?.bookName || '';
-        if (byBook.has(name)) {
-            byBook.get(name).push(result);
+        const key = resultKeyOf(result);
+        if (byContainer.has(key)) {
+            byContainer.get(key).push(result);
         } else {
             orphans.push(result);
         }
     }
-    const sections = [...worldScope].map(name => ({ name, list: byBook.get(name) }));
+    const sections = containers.map(container => ({
+        name: container.name,
+        list: byContainer.get(scopeEntryKey(container)),
+    }));
     if (orphans.length) {
         sections.push({ name: '', list: orphans });
     }
@@ -2017,12 +2264,6 @@ function appendResultRow(result) {
         appendHighlightedText(title, titleText, titleRanges);
     } else {
         title.textContent = titleText;
-    }
-    if (isActivePresetItem(item)) {
-        const badge = document.createElement('span');
-        badge.className = 'st-jets-active-badge';
-        badge.textContent = '使用中';
-        title.appendChild(badge);
     }
 
     const subtitle = document.createElement('div');
@@ -2187,9 +2428,11 @@ async function executeResult(result) {
         return;
     }
 
-    // 书级行是挂载动作而非跳转：把书挂进搜索栏继续搜，弹窗保持打开
-    if (item.type === 'worldinfo_book') {
-        mountWorldBook(item?.metadata?.bookName);
+    // 容器级行（书 / 预设）是挂载动作而非跳转：把范围挂进搜索栏继续搜，弹窗保持打开
+    if (item.type === 'worldinfo_book' || item.type === 'preset_book') {
+        mountScopeToken(item.type === 'preset_book'
+            ? { kind: 'preset', name: item?.metadata?.presetName, presetType: item?.metadata?.presetType }
+            : { kind: 'worldinfo', name: item?.metadata?.bookName });
         return;
     }
 
@@ -2510,50 +2753,46 @@ function renderCategoryChips() {
     }
 }
 
-// 挂载范围行：世界书分类同色（紫），点 chip 或 × 都可移除挂载
-function renderWorldScopeChips() {
+// 挂载 tokens：渲染在搜索框内部。橙色是「挂载」专属色，与三个分类色（天蓝/紫/玫红）都拉开；
+// 图标区分种类（书 / 预设），点 chip 或 × 都可移除
+function renderScopeChips() {
     const row = document.getElementById('st-jets-scope');
     if (!row) return;
     row.innerHTML = '';
-    row.hidden = worldScope.size === 0;
-    if (!worldScope.size) return;
+    row.hidden = searchScope.length === 0;
+    if (!searchScope.length) return;
 
-    const label = document.createElement('span');
-    label.className = 'st-jets-pin-rowlabel';
-    label.title = '世界书范围：挂载后，搜索只指向这些书的条目';
-    const labelIcon = document.createElement('i');
-    labelIcon.className = 'fa-solid fa-book-bookmark';
-    label.appendChild(labelIcon);
-    row.appendChild(label);
-
-    const color = CATEGORIES.find(category => category.id === 'worldinfo')?.color || '';
-    for (const name of worldScope) {
+    for (const entry of searchScope) {
+        const key = scopeEntryKey(entry);
         const chip = document.createElement('div');
         chip.className = 'st-jets-chip is-active st-jets-scope-chip';
-        chip.title = '点击移除挂载，恢复全书搜索';
+        chip.title = entry.kind === 'preset'
+            ? `预设范围（${PRESET_MANAGER_LABELS[entry.presetType] || entry.presetType}）：挂载后只搜该预设内容，点击移除`
+            : '世界书范围：挂载后只搜该书条目，点击移除';
         chip.setAttribute('role', 'button');
         chip.tabIndex = 0;
-        if (color) {
-            chip.style.setProperty('--st-jets-chip-color', color);
-        }
+
+        const icon = document.createElement('i');
+        icon.className = entry.kind === 'preset' ? 'fa-solid fa-sliders' : 'fa-solid fa-book-bookmark';
+        chip.appendChild(icon);
 
         const text = document.createElement('span');
         text.className = 'st-jets-chip-text';
-        text.textContent = name;
+        text.textContent = entry.name;
+        chip.appendChild(text);
 
         const remove = document.createElement('span');
         remove.className = 'st-jets-chip-remove';
         remove.textContent = '×';
         remove.title = '移除挂载';
-
-        chip.appendChild(text);
         chip.appendChild(remove);
-        chip.addEventListener('click', () => unmountWorldBook(name));
+
+        chip.addEventListener('click', () => unmountScopeToken(key));
         chip.addEventListener('keydown', event => {
             if (event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault();
                 event.stopPropagation();
-                unmountWorldBook(name);
+                unmountScopeToken(key);
             }
         });
         row.appendChild(chip);
