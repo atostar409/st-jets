@@ -25,7 +25,7 @@
 ## 安装
 1. 打开 SillyTavern → 顶部【扩展】图标
 2. 点击【安装扩展】
-3. 粘贴仓库地址：`https://github.com/<你的用户名>/st-jets`
+3. 粘贴仓库地址：`https://github.com/atostar409/st-jets`
 
 ### 离线安装（给没有梯子 / 内网的朋友）
 1. 拿到 `st-jets` 文件夹（zip 包解压出来即可）

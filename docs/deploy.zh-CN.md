@@ -9,7 +9,7 @@
 ## 第 0 步：注册 GitHub 账号
 
 1. 打开 <https://github.com/signup>
-2. 填邮箱 → 设置密码 → 取用户名（后面用 `<你的用户名>` 代替，记住它）
+2. 填邮箱 → 设置密码 → 取用户名（后面用 `atostar409` 代替，记住它）
 3. 邮箱验证完成后进入主页即可
 
 ## 第 1 步：创建一个空仓库
@@ -20,7 +20,7 @@
 4. **其他什么都不勾**（不要勾 README / .gitignore / License，我们要传的是现成文件）
 5. 点 **Create repository**
 6. 创建完成后，页面会显示你的仓库地址，长这样：
-   `https://github.com/<你的用户名>/st-jets`
+   `https://github.com/atostar409/st-jets`
    —— 这就是将来给别人安装用的链接，先复制存好。
 
 ## 第 2 步：上传插件文件
@@ -51,8 +51,8 @@
 # 1. 进入插件目录
 cd /f/SillyTavern/SillyTavern-1.17.0/public/scripts/extensions/third-party/st-jets
 
-# 2. 把仓库关联到你的 GitHub（替换 <你的用户名>）
-git remote add origin https://github.com/<你的用户名>/st-jets.git
+# 2. 把仓库关联到你的 GitHub（替换 atostar409）
+git remote add origin https://github.com/atostar409/st-jets.git
 # 如果提示 remote origin already exists，先执行：git remote remove origin，再执行上面那条
 
 # 3. 推送
@@ -66,9 +66,9 @@ git push -u origin main
 > ```bash
 > rm -rf .git
 > git init -b main
-> git config user.name "<你的用户名>"
+> git config user.name "atostar409"
 > git config user.email "<你的GitHub邮箱>"
-> git remote add origin https://github.com/<你的用户名>/st-jets.git
+> git remote add origin https://github.com/atostar409/st-jets.git
 > git add -A
 > git commit -m "发布 0.3.0"
 > git push -u origin main
@@ -86,7 +86,7 @@ git push -u origin main
 
 1. 打开 SillyTavern → 顶部**扩展**图标（插头样子）
 2. 点 **安装扩展 / Install extension**
-3. 粘贴仓库地址：`https://github.com/<你的用户名>/st-jets`
+3. 粘贴仓库地址：`https://github.com/atostar409/st-jets`
 4. 确认，完成 ✅
 
 **更新**：别人在扩展列表里点 **更新 / Update**，然后刷新酒馆页面即可拿到新版本。
@@ -95,7 +95,7 @@ git push -u origin main
 ## 第 4 步（可选）：完善仓库信息
 
 - 打开 `manifest.json`，把 `homePage` 加上你的仓库地址（如果以后要填）：
-  `"homePage": "https://github.com/<你的用户名>/st-jets"`
+  `"homePage": "https://github.com/atostar409/st-jets"`
 - 在仓库页面点 **About** ⚙ 可加描述和主题标签（如 `sillytavern`、`extension`），方便被搜到
 
 ## 常见问题

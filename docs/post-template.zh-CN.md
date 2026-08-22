@@ -23,7 +23,7 @@ JETS 是一个酒馆全局搜索插件，帮你在角色、世界书、聊天历
 1. 打开 SillyTavern → 顶部【扩展】图标  
 2. 点击【安装扩展】  
 3. 粘贴仓库地址  
-   - GitHub：`https://github.com/<你的用户名>/st-jets`
+   - GitHub：`https://github.com/atostar409/st-jets`
 
 推荐：安装 ST API Wrapper，可提升聊天跳转/滚动稳定性与索引体验。
 
@@ -38,7 +38,7 @@ JETS 是一个酒馆全局搜索插件，帮你在角色、世界书、聊天历
 - 第三方请求域名：无  
 
 **📄 源码与许可**  
-源码公开：`https://github.com/<你的用户名>/st-jets`  
+源码公开：`https://github.com/atostar409/st-jets`  
 许可协议：CC BY-NC-SA 4.0
 
 **🙏 致谢**  
