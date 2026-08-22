@@ -556,7 +556,7 @@ function getJetsSettings() {
         settings.stripReasoning = true;
     }
 
-    // 面板外观主题：default（默认深色）/ galaxy（星空液态玻璃）
+    // 面板外观主题：default（默认深色）/ galaxy（疏星·液态玻璃）
     if (settings.theme !== 'galaxy' && settings.theme !== 'default') {
         settings.theme = 'default';
     }
@@ -593,7 +593,7 @@ function saveJetsSettings() {
     }
 }
 
-// 把当前主题套到弹窗容器上（galaxy = 星空液态玻璃，其余 = 默认深色）
+// 把当前主题套到弹窗容器上（galaxy = 疏星·液态玻璃，其余 = 默认深色）
 function applyJetsTheme() {
     const root = document.getElementById('st-jets-container');
     if (!root) return;
@@ -691,9 +691,67 @@ function processMessageContent(value) {
     return stripReasoningBlocks(value);
 }
 
+// ===== 「正在使用」预设判定：全走 SillyTavern 官方接口，任何预设名 / 任何环境通用 =====
+
+// 酒馆全部预设管理器键（index.html 里 select[data-preset-manager-for] 的官方布线）
+const PRESET_MANAGER_KEYS = ['context', 'instruct', 'sysprompt', 'openai', 'textgenerationwebui', 'kobold', 'novel', 'reasoning'];
+
+// 每次搜索前重建一次：拿到每类预设「当前选中」的名字与下标
+let activePresetSnapshot = new Map();
+
+function snapshotActivePresets() {
+    const snapshot = new Map();
+    const context = getContextFromGlobal();
+    for (const key of PRESET_MANAGER_KEYS) {
+        let name = '';
+        let index = NaN;
+        try {
+            const manager = context?.getPresetManager?.(key);
+            // 官方 API：选中项的显示文本就是预设名
+            if (manager?.getSelectedPresetName) {
+                name = String(manager.getSelectedPresetName() || '').trim();
+            }
+            // 按下标的管理器（如对话补全）select 的 value 是数组下标
+            if (manager?.getSelectedPreset) {
+                const value = Number(manager.getSelectedPreset());
+                if (Number.isInteger(value) && value >= 0) index = value;
+            }
+        } catch {
+            // 管理器未就绪时走下面的 DOM 兜底
+        }
+        if (!name || !Number.isInteger(index)) {
+            const option = document.querySelector(`select[data-preset-manager-for="${key}"]`)?.selectedOptions?.[0];
+            if (!name && option?.textContent) {
+                name = option.textContent.trim();
+            }
+            if (!Number.isInteger(index) && option) {
+                const value = Number(option.value);
+                if (Number.isInteger(value) && value >= 0) index = value;
+            }
+        }
+        if (name || Number.isInteger(index)) {
+            snapshot.set(key, { nameLower: name.toLowerCase(), index });
+        }
+    }
+    return snapshot;
+}
+
+// 名字完全一致，或（按下标的管理器）数组下标一致 → 就是正在使用的那个
+function isActivePresetItem(item) {
+    if (item?.type !== 'preset') return false;
+    const info = activePresetSnapshot.get(item?.metadata?.presetType);
+    if (!info) return false;
+    if (info.nameLower && String(item?.title || '').trim().toLowerCase() === info.nameLower) return true;
+    return Number.isInteger(info.index) && info.index === item?.metadata?.presetIndex;
+}
+
+const ACTIVE_PRESET_SCORE_BOOST = 500;
+
 const searcher = new Searcher({
     maxResults: 50,
-    getExtraScore: (item) => getUsageExtraScore(item),
+    // 正在使用的预设大幅加权：只要命中查询词就置顶，直接锁定
+    getExtraScore: (item) =>
+        getUsageExtraScore(item) + (isActivePresetItem(item) ? ACTIVE_PRESET_SCORE_BOOST : 0),
 });
 searcher.addBatch([...STATIC_ITEMS]);
 
@@ -724,6 +782,23 @@ presetInstructSource.type = 'preset:instruct';
 const presetSyspromptSource = new PresetSource([], 'sysprompt');
 presetSyspromptSource.type = 'preset:sysprompt';
 
+// 对话补全预设（OpenAI Settings，社区说的「预设」基本都是这类）与其余管理器，
+// 名称解析与「正在使用」判定全走 preset manager 官方接口，不依赖任何具体预设内容
+const presetOpenaiSource = new PresetSource([], 'openai');
+presetOpenaiSource.type = 'preset:openai';
+
+const presetTextgenSource = new PresetSource([], 'textgenerationwebui');
+presetTextgenSource.type = 'preset:textgenerationwebui';
+
+const presetKoboldSource = new PresetSource([], 'kobold');
+presetKoboldSource.type = 'preset:kobold';
+
+const presetNovelSource = new PresetSource([], 'novel');
+presetNovelSource.type = 'preset:novel';
+
+const presetReasoningSource = new PresetSource([], 'reasoning');
+presetReasoningSource.type = 'preset:reasoning';
+
 const chatSource = new ChatSource([], {
     includeMessages: false,
     maxMessagesPerChat: Number.POSITIVE_INFINITY,
@@ -742,6 +817,11 @@ const dataLoader = new DataLoader({
         presetContextSource,
         presetInstructSource,
         presetSyspromptSource,
+        presetOpenaiSource,
+        presetTextgenSource,
+        presetKoboldSource,
+        presetNovelSource,
+        presetReasoningSource,
         chatSource,
         settingsSource,
     ],
@@ -949,8 +1029,18 @@ async function refreshSettingsIndex() {
     return items;
 }
 
-// 世界书 + 三类预设：晚就绪兜底用，整类替换避免与旧条目重复
-const LIGHT_SOURCE_TYPES = ['worldinfo', 'preset:context', 'preset:instruct', 'preset:sysprompt'];
+// 世界书 + 全部预设管理器：晚就绪兜底用，整类替换避免与旧条目重复
+const LIGHT_SOURCE_TYPES = [
+    'worldinfo',
+    'preset:context',
+    'preset:instruct',
+    'preset:sysprompt',
+    'preset:openai',
+    'preset:textgenerationwebui',
+    'preset:kobold',
+    'preset:novel',
+    'preset:reasoning',
+];
 
 async function refreshWorldInfoAndPresetIndex() {
     const results = await Promise.all(LIGHT_SOURCE_TYPES.map(type =>
@@ -1258,7 +1348,7 @@ function ensureDom() {
     modal = document.createElement('div');
     modal.id = 'st-jets-modal';
 
-    // 星空液态玻璃主题的背景层（默认主题下隐藏，纯装饰不拦截点击）
+    // 疏星主题的背景层（默认主题下隐藏，纯装饰不拦截点击）
     const galaxyLayer = document.createElement('div');
     galaxyLayer.id = 'st-jets-galaxy-layer';
 
@@ -1462,6 +1552,8 @@ function rerunSearchIfOpen() {
 }
 
 function runSearch() {
+    // 每次搜索前刷新「正在使用」预设快照，与用户当前选中的预设保持一致
+    activePresetSnapshot = snapshotActivePresets();
     const query = input.value.trim();
     const pins = getEnabledPinnedTerms();
     if (!query && !pins.length) {
@@ -1708,6 +1800,12 @@ function renderResults(found) {
                 appendHighlightedText(title, titleText, titleRanges);
             } else {
                 title.textContent = titleText;
+            }
+            if (isActivePresetItem(item)) {
+                const badge = document.createElement('span');
+                badge.className = 'st-jets-active-badge';
+                badge.textContent = '使用中';
+                title.appendChild(badge);
             }
 
             const subtitle = document.createElement('div');
@@ -2431,7 +2529,7 @@ function renderThemeChips() {
     const current = getJetsSettings().theme;
     const options = [
         { id: 'default', label: '默认', icon: 'fa-solid fa-circle-half-stroke', color: '' },
-        { id: 'galaxy', label: '星空玻璃', icon: 'fa-solid fa-star', color: '#a5b4fc' },
+        { id: 'galaxy', label: '疏星', icon: 'fa-solid fa-star', color: '#a5b4fc' },
     ];
     for (const option of options) {
         row.appendChild(createChip({
