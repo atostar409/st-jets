@@ -416,11 +416,12 @@ const TYPE_LABELS = {
     other: '其他',
 };
 
-// 搜索分类：「全部」是独立状态（选中时具体分类全灭，反之亦然）；角色与聊天本为一体，合并为一类
+// 搜索分类：「全部」是总控——三个具体分类全亮时它自动跟着亮；
+// 全亮时点它一键全灭，未全亮时点它一键全开，具体分类各自独立开关
 const CATEGORIES = [
     { id: 'character', label: '角色/聊天', icon: 'fa-solid fa-user-group', color: '#7dd3fc', types: ['character', 'chat', 'chat_message'] },
     { id: 'worldinfo', label: '世界书', icon: 'fa-solid fa-book-bookmark', color: '#c4b5fd', types: ['worldinfo'] },
-    { id: 'preset', label: '预设', icon: 'fa-solid fa-sliders', color: '#f9a8d4', types: ['preset'] },
+    { id: 'preset', label: '预设', icon: 'fa-solid fa-sliders', color: '#f472b6', types: ['preset'] },
 ];
 const ALL_CATEGORY_IDS = CATEGORIES.map(category => category.id);
 
@@ -534,16 +535,21 @@ function getJetsSettings() {
         }
     }
 
-    // categories 语义：空数组 = 「全部」；存具体 id = 只搜这些分类
+    // categories 语义：存「当前点亮的分类 id」——全量 = 全亮（含总控「全部」），空数组 = 一个没亮（搜不到任何东西）
     const knownIds = new Set(ALL_CATEGORY_IDS);
     if (Array.isArray(settings.categories)) {
         settings.categories = settings.categories.filter(id => knownIds.has(id));
-        if (settings.categories.length >= ALL_CATEGORY_IDS.length) {
-            settings.categories = [];
+        // 旧版（互斥逻辑）把空数组当「全部」：迁移成全量；新版里空数组是「全灭」
+        if (!settings.chipsMasterLogic) {
+            if (!settings.categories.length) {
+                settings.categories = [...ALL_CATEGORY_IDS];
+            }
+            settings.chipsMasterLogic = true;
         }
     }
     else {
-        settings.categories = [];
+        settings.categories = [...ALL_CATEGORY_IDS];
+        settings.chipsMasterLogic = true;
     }
 
     if (typeof settings.stripReasoning !== 'boolean') {
@@ -584,17 +590,17 @@ function saveJetsSettings() {
 
 function getActiveTypes() {
     const settings = getJetsSettings();
-    if (!settings.categories.length) {
-        return null; // 「全部」
-    }
     const enabled = new Set(settings.categories);
+    if (enabled.size >= ALL_CATEGORY_IDS.length) {
+        return null; // 全亮 = 不限类型
+    }
     const types = new Set();
     for (const category of CATEGORIES) {
         if (enabled.has(category.id)) {
             category.types.forEach(type => types.add(type));
         }
     }
-    return types.size ? types : null;
+    return types; // 可能为空集合：一个分类都没亮，什么也搜不到
 }
 
 function getPinnedTerms() {
@@ -1610,9 +1616,11 @@ function renderResults(found) {
     if (!found.length) {
         const empty = document.createElement('div');
         empty.className = 'st-jets-empty';
-        empty.textContent = getEnabledPinnedTerms().length
-            ? '没有同时命中所有已启用关键词的结果'
-            : '没有找到结果';
+        empty.textContent = !getJetsSettings().categories.length
+            ? '没有点亮任何分类，点「全部」或具体分类开始搜索'
+            : getEnabledPinnedTerms().length
+                ? '没有同时命中所有已启用关键词的结果'
+                : '没有找到结果';
         results.appendChild(empty);
         return;
     }
@@ -2095,9 +2103,9 @@ function createChip({ label, icon = '', color = '', active = false, title = '', 
 
 function setCategories(ids) {
     const settings = getJetsSettings();
-    const known = ALL_CATEGORY_IDS.filter(id => ids.includes(id));
-    // 全选等价于「全部」，存成空数组；一个不剩也回落到「全部」
-    settings.categories = known.length && known.length < ALL_CATEGORY_IDS.length ? known : [];
+    const enabled = new Set(ids);
+    // 直接存点亮的集合：全量 = 全亮，空 = 全灭，不做任何换算
+    settings.categories = ALL_CATEGORY_IDS.filter(id => enabled.has(id));
     saveJetsSettings();
     renderCategoryChips();
     rerunSearchIfOpen();
@@ -2110,14 +2118,15 @@ function renderCategoryChips() {
 
     const settings = getJetsSettings();
     const enabled = new Set(settings.categories);
-    const isAll = settings.categories.length === 0;
+    // 总控「全部」：三个具体分类全亮时它自动亮
+    const isAll = ALL_CATEGORY_IDS.every(id => enabled.has(id));
 
     row.appendChild(createChip({
         label: '全部',
         icon: 'fa-solid fa-layer-group',
         active: isAll,
-        title: '搜索全部内容',
-        onClick: () => setCategories([]),
+        title: isAll ? '全部点亮中，点击一键全灭' : '一键点亮所有分类',
+        onClick: () => setCategories(isAll ? [] : [...ALL_CATEGORY_IDS]),
     }));
 
     for (const category of CATEGORIES) {
@@ -2127,7 +2136,7 @@ function renderCategoryChips() {
             icon: category.icon,
             color: category.color,
             active,
-            title: active ? `已选中「${category.label}」，点击取消` : `筛选${category.label}（可与其他分类叠加）`,
+            title: active ? `已点亮「${category.label}」，点击熄灭` : `点亮「${category.label}」（可与其他分类叠加）`,
             onClick: () => {
                 const next = new Set(enabled);
                 if (next.has(category.id)) {
