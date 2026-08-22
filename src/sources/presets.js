@@ -10,13 +10,6 @@ export class PresetSource {
     }
 
     async load({ type = this.presetType } = {}) {
-        const api = typeof globalThis !== 'undefined' ? globalThis.ST_API : null;
-        if (api?.preset?.list && (type === 'openai' || type === 'preset' || type === 'chat')) {
-            const result = await api.preset.list();
-            this.presets = result?.presets || [];
-            return this.presets;
-        }
-
         const context = (typeof globalThis !== 'undefined' && globalThis.SillyTavern?.getContext)
             ? globalThis.SillyTavern.getContext()
             : (typeof globalThis !== 'undefined' && typeof globalThis.getContext === 'function'
@@ -26,8 +19,10 @@ export class PresetSource {
         if (context?.getPresetManager) {
             const manager = context.getPresetManager(type);
             const list = manager?.getPresetList ? manager.getPresetList() : null;
-            if (list?.presets) {
-                this.presets = list.presets;
+            // getPresetList 返回 { presets, ... }，个别版本直接返回数组，两种都兼容
+            const presets = Array.isArray(list) ? list : list?.presets;
+            if (Array.isArray(presets) && presets.length) {
+                this.presets = presets;
                 return this.presets;
             }
         }
@@ -63,6 +58,10 @@ export class PresetSource {
         }
         if (data.system_prompt) {
             pushText(data.system_prompt);
+        }
+        if (data.content) {
+            // sysprompt 预设的正文存在 content 字段
+            pushText(data.content);
         }
         if (data.input_suffix) {
             pushText(data.input_suffix);

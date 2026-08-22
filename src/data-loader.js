@@ -72,7 +72,11 @@ export class DataLoader {
             items = data;
         }
 
-        this.cache.set(type, items);
+        // 空结果不缓存：某个源初始化未就绪拿到空表时，下次调用还能重试，
+        // 否则整个会话期间这类内容都搜不到
+        if (items.length || force) {
+            this.cache.set(type, items);
+        }
         return items;
     }
 }

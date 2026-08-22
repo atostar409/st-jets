@@ -556,6 +556,11 @@ function getJetsSettings() {
         settings.stripReasoning = true;
     }
 
+    // 面板外观主题：default（默认深色）/ galaxy（星空液态玻璃）
+    if (settings.theme !== 'galaxy' && settings.theme !== 'default') {
+        settings.theme = 'default';
+    }
+
     if (!Array.isArray(settings.reasoningTags)) {
         settings.reasoningTags = [...DEFAULT_REASONING_TAGS];
     }
@@ -586,6 +591,13 @@ function saveJetsSettings() {
     if (typeof saveSettingsDebounced === 'function') {
         saveSettingsDebounced();
     }
+}
+
+// 把当前主题套到弹窗容器上（galaxy = 星空液态玻璃，其余 = 默认深色）
+function applyJetsTheme() {
+    const root = document.getElementById('st-jets-container');
+    if (!root) return;
+    root.classList.toggle('st-jets-theme-galaxy', getJetsSettings().theme === 'galaxy');
 }
 
 function getActiveTypes() {
@@ -914,6 +926,10 @@ async function performStartupLoad() {
     searcher.addBatch([...STATIC_ITEMS, ...nonChatItems, ...chatListItems]);
     // 3. 仅把新增/变更的聊天排入后台增量索引
     startBackgroundChatIndexing();
+    // 4. 兜底：世界书/预设依赖的客户端数据偶发晚就绪，首次空手而归时延迟强刷一次
+    if (!nonChatItems.some(item => item?.type === 'worldinfo' || item?.type === 'preset')) {
+        setTimeout(() => { void refreshWorldInfoAndPresetIndex(); }, 15000);
+    }
 }
 
 function ensureDataLoaded() {
@@ -931,6 +947,24 @@ async function refreshSettingsIndex() {
     const items = await dataLoader.loadByType('settings', { force: true });
     searcher.replaceByType('settings', items);
     return items;
+}
+
+// 世界书 + 三类预设：晚就绪兜底用，整类替换避免与旧条目重复
+const LIGHT_SOURCE_TYPES = ['worldinfo', 'preset:context', 'preset:instruct', 'preset:sysprompt'];
+
+async function refreshWorldInfoAndPresetIndex() {
+    const results = await Promise.all(LIGHT_SOURCE_TYPES.map(type =>
+        dataLoader.loadByType(type, { force: true }).catch(err => {
+            console.warn(`JETS: 重载 ${type} 失败`, err);
+            return [];
+        }),
+    ));
+    const items = results.flat().filter(Boolean);
+    if (!items.length) return;
+    for (const type of ['worldinfo', 'preset']) {
+        searcher.replaceByType(type, items.filter(item => item?.type === type));
+    }
+    rerunSearchIfOpen();
 }
 
 const BACKGROUND_CHAT_BATCH_SIZE = 3;
@@ -1224,6 +1258,10 @@ function ensureDom() {
     modal = document.createElement('div');
     modal.id = 'st-jets-modal';
 
+    // 星空液态玻璃主题的背景层（默认主题下隐藏，纯装饰不拦截点击）
+    const galaxyLayer = document.createElement('div');
+    galaxyLayer.id = 'st-jets-galaxy-layer';
+
     const header = document.createElement('div');
     header.id = 'st-jets-header';
 
@@ -1293,6 +1331,7 @@ function ensureDom() {
     results = document.createElement('div');
     results.id = 'st-jets-results';
 
+    modal.appendChild(galaxyLayer);
     modal.appendChild(header);
     modal.appendChild(toolbar);
     modal.appendChild(settingsPanel);
@@ -1300,6 +1339,7 @@ function ensureDom() {
     container.appendChild(overlay);
     container.appendChild(modal);
     document.body.appendChild(container);
+    applyJetsTheme();
 
     overlay.addEventListener('click', closeJets);
     overlay.addEventListener('pointerdown', event => {
@@ -1344,6 +1384,7 @@ function ensureOptionsMenuEntry() {
 function openJets() {
     if (isOpen) return;
     ensureDom();
+    applyJetsTheme();
     ensureDataLoaded();
     if (settingsIndexDirty) {
         settingsIndexDirty = false;
@@ -2289,6 +2330,15 @@ function buildSettingsPanel() {
     const panel = document.createElement('div');
     panel.id = 'st-jets-settings';
 
+    // —— 外观 ——
+    const themeTitle = document.createElement('div');
+    themeTitle.className = 'st-jets-settings-title';
+    themeTitle.textContent = '面板外观';
+
+    const themeRow = document.createElement('div');
+    themeRow.className = 'st-jets-settings-row';
+    themeRow.id = 'st-jets-theme-row';
+
     // —— 内容屏蔽 ——
     const blockTitle = document.createElement('div');
     blockTitle.className = 'st-jets-settings-title';
@@ -2361,6 +2411,8 @@ function buildSettingsPanel() {
     hint.className = 'st-jets-settings-hint';
     hint.textContent = '首次使用会在后台空闲时逐步索引全部聊天；AI 生成回复期间自动暂停，不影响酒馆性能。';
 
+    panel.appendChild(themeTitle);
+    panel.appendChild(themeRow);
     panel.appendChild(blockTitle);
     panel.appendChild(reasoningRow);
     panel.appendChild(tagsRow);
@@ -2371,12 +2423,44 @@ function buildSettingsPanel() {
     return panel;
 }
 
+function renderThemeChips() {
+    const row = document.getElementById('st-jets-theme-row');
+    if (!row) return;
+    row.innerHTML = '';
+
+    const current = getJetsSettings().theme;
+    const options = [
+        { id: 'default', label: '默认', icon: 'fa-solid fa-circle-half-stroke', color: '' },
+        { id: 'galaxy', label: '星空玻璃', icon: 'fa-solid fa-star', color: '#a5b4fc' },
+    ];
+    for (const option of options) {
+        row.appendChild(createChip({
+            label: option.label,
+            icon: option.icon,
+            color: option.color,
+            active: current === option.id,
+            title: option.id === 'galaxy'
+                ? '液态玻璃质感 + 流动星云与微闪星光'
+                : '默认深色面板',
+            onClick: () => {
+                const settings = getJetsSettings();
+                if (settings.theme === option.id) return;
+                settings.theme = option.id;
+                saveJetsSettings();
+                applyJetsTheme();
+                renderThemeChips();
+            },
+        }));
+    }
+}
+
 function refreshSettingsPanel() {
     const settings = getJetsSettings();
     const checkbox = document.getElementById('st-jets-reasoning-toggle');
     if (checkbox) {
         checkbox.checked = !!settings.stripReasoning;
     }
+    renderThemeChips();
     renderReasoningTagChips();
     updateIndexStatusUi();
 }
