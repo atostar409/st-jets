@@ -1,9 +1,9 @@
 {
-    "display_name": "JETS (Just Enough Tavern Search)",
+    "display_name": "全局搜索",
     "loading_order": 30,
     "js": "index.js",
     "css": "style.css",
-    "author": "SillyTavern Community",
-    "version": "0.3.1",
+    "author": "Moeblack (original), Atostraes (this fork)",
+    "version": "0.3.2",
     "description": "Just Enough Tavern Search: search everywhere across SillyTavern resources."
 }

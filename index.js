@@ -1315,12 +1315,12 @@ function ensureOptionsMenuEntry() {
 
     const item = document.createElement('a');
     item.id = 'option_st_jets';
-    item.title = '打开 JETS 全局搜索 (Alt+K)';
+    item.title = '全局搜索 (Alt+K)';
 
     const icon = document.createElement('i');
     icon.className = 'fa-lg fa-solid fa-magnifying-glass';
     const label = document.createElement('span');
-    label.textContent = '全局搜索 (JETS)';
+    label.textContent = '全局搜索';
 
     item.appendChild(icon);
     item.appendChild(label);
