@@ -1630,7 +1630,11 @@ function ensureDom() {
         if (event.button !== undefined && event.button !== 0) return;
         closeJets();
     });
-    input.addEventListener('input', handleSearchInput);
+    // 输入法组词过程（拼音中间串，常是单个字母）不触发搜索，组词完成才搜
+    input.addEventListener('input', event => {
+        if (event.isComposing) return;
+        handleSearchInput();
+    });
 }
 
 function ensureOptionsMenuEntry() {
@@ -1745,6 +1749,9 @@ function rerunSearchIfOpen() {
     }
 }
 
+// 单个英文字母/数字拦截：i、m、l 这种几乎每条内容都含，一搜就是全库命中 + 海量结果对象，必卡
+const SINGLE_ASCII_RE = /^[a-z0-9]$/i;
+
 function runSearch() {
     // 每次搜索前刷新「正在使用」预设快照，与用户当前选中的预设保持一致
     activePresetSnapshot = snapshotActivePresets();
@@ -1753,6 +1760,16 @@ function runSearch() {
     if (!query && !pins.length && !searchScope.length) {
         clearResults();
         hideResults();
+        return;
+    }
+
+    if (SINGLE_ASCII_RE.test(query) || pins.some(term => SINGLE_ASCII_RE.test(term))) {
+        clearResults();
+        showResults();
+        const empty = document.createElement('div');
+        empty.className = 'st-jets-empty';
+        empty.textContent = '单个字母/数字会命中几乎所有内容导致卡顿——至少输入 2 个字符（单个汉字不受限）';
+        results.appendChild(empty);
         return;
     }
 

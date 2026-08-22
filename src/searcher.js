@@ -8,21 +8,43 @@ const DEFAULT_OPTIONS = {
     getExtraScore: null,
 };
 
+// 性能护栏：命中区间最多记 12 个（摘要只展示前几处，记几百个纯属浪费）；
+// 子序列兜底只扫短内容（长内容逐字符比对在无命中查询下是最大隐性开销）；
+// 结果爆量后放弃低分条目，避免上万条对象进排序
+const MATCH_RANGE_LIMIT = 12;
+const SUBSEQUENCE_CONTENT_LIMIT = 1200;
+const RESULT_OVERFLOW_LIMIT = 3000;
+
 function normalizeText(value) {
     if (value === null || value === undefined) return '';
     return String(value).toLowerCase();
 }
 
-function getMatchPositions(text, query) {
-    const matches = [];
-    if (!text || !query) return matches;
+// 小写化是最贵的一步：结果缓存在条目上，后续搜索直接复用。
+// 不缓存的话每敲一次键（防抖后）都会把全库内容 toLowerCase 一遍——大聊天库下就是卡顿主因
+function getNormalizedTexts(item) {
+    let cache = item?._jetsNorm;
+    if (!cache) {
+        cache = {
+            title: normalizeText(item?.title ?? ''),
+            content: normalizeText(item?.content ?? ''),
+        };
+        item._jetsNorm = cache;
+    }
+    return cache;
+}
 
-    const lowerText = normalizeText(text);
-    const lowerQuery = normalizeText(query);
+// 入参均为已小写文本；limit <= 0 表示不限量
+function getMatchPositions(lowerText, lowerQuery, limit = MATCH_RANGE_LIMIT) {
+    const matches = [];
+    if (!lowerText || !lowerQuery) return matches;
 
     let index = lowerText.indexOf(lowerQuery);
     while (index !== -1) {
         matches.push({ start: index, end: index + lowerQuery.length });
+        if (limit > 0 && matches.length >= limit) {
+            break;
+        }
         index = lowerText.indexOf(lowerQuery, index + lowerQuery.length);
     }
 
@@ -121,14 +143,13 @@ export class Searcher {
                 continue;
             }
 
-            const title = item?.title ?? '';
-            const content = item?.content ?? '';
+            const norm = getNormalizedTexts(item);
 
             let termMatches = [];
             let termsSatisfied = true;
             for (const term of terms) {
-                const titleTermMatches = getMatchPositions(title, term);
-                const contentTermMatches = getMatchPositions(content, term);
+                const titleTermMatches = getMatchPositions(norm.title, term);
+                const contentTermMatches = getMatchPositions(norm.content, term);
                 if (!titleTermMatches.length && !contentTermMatches.length) {
                     termsSatisfied = false;
                     break;
@@ -144,24 +165,25 @@ export class Searcher {
 
             let score = 0;
             const matches = [];
+            let hadTitleMatch = false;
 
             if (normalizedQuery) {
-                const titleMatches = getMatchPositions(title, normalizedQuery);
-                const contentMatches = getMatchPositions(content, normalizedQuery);
+                const titleMatches = getMatchPositions(norm.title, normalizedQuery);
+                const contentMatches = getMatchPositions(norm.content, normalizedQuery);
 
                 if (titleMatches.length > 0) {
                     score += 100 + titleMatches.length * 10;
+                    hadTitleMatch = true;
                 }
                 if (contentMatches.length > 0) {
                     score += 50 + contentMatches.length * 5;
                 }
 
                 if (score === 0) {
-                    const lowerTitle = normalizeText(title);
-                    const lowerContent = normalizeText(content);
-                    if (isSubsequence(normalizedQuery, lowerTitle)) {
+                    if (isSubsequence(normalizedQuery, norm.title)) {
                         score = 30;
-                    } else if (isSubsequence(normalizedQuery, lowerContent)) {
+                    } else if (norm.content.length <= SUBSEQUENCE_CONTENT_LIMIT
+                        && isSubsequence(normalizedQuery, norm.content)) {
                         score = 15;
                     }
                 }
@@ -187,6 +209,12 @@ export class Searcher {
                         continue;
                     }
                 }
+            }
+
+            // 爆量保护：条目已远超展示所需时只保留标题命中的（正文命中排序必居后、
+            // 渲染根本用不到），别让几万个对象进排序。代价是病理查询下计数偏低，可接受
+            if (results.length >= RESULT_OVERFLOW_LIMIT && !hadTitleMatch) {
+                continue;
             }
 
             matches.push(...termMatches);
