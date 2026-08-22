@@ -1685,6 +1685,9 @@ function openJets() {
     isOpen = true;
     container.classList.add('is-open');
     container.setAttribute('aria-hidden', 'false');
+    // iOS Safari：display 切换瞬间出现的元素不采样背后内容，磨砂会静默失效；
+    // 等页面画完一帧再挂磨砂类，逼它重采样（样式在 .st-jets-frost 上）
+    requestAnimationFrame(() => requestAnimationFrame(() => overlay.classList.add('st-jets-frost')));
     lastQuery = input.value.trim();
     if (!queryWatcher) {
         queryWatcher = setInterval(() => {
@@ -1708,6 +1711,7 @@ function closeJets() {
     if (!isOpen) return;
     isOpen = false;
     container.classList.remove('is-open');
+    overlay.classList.remove('st-jets-frost');
     container.setAttribute('aria-hidden', 'true');
     input.value = '';
     clearResults();

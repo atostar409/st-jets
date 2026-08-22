@@ -17,11 +17,16 @@
     position: absolute;
     inset: 0;
     background: rgba(0, 0, 0, 0.45);
-    /* 面板外整体磨砂：重模糊才压得住后面的聊天文字，隔着玻璃看页面的氛围感 */
-    backdrop-filter: blur(14px) saturate(1.2);
-    -webkit-backdrop-filter: blur(14px) saturate(1.2);
     cursor: pointer;
     touch-action: none;
+}
+
+/* 面板外磨砂。挂在类上、打开后下一帧再加（index.js）：iOS Safari 对
+   display 切换瞬间出现的元素经常不采样背后内容，backdrop-filter 静默失效；
+   先让页面画完一帧、再上模糊，逼它重采样。模糊失败时底色本身已够深，可读性不靠它 */
+#st-jets-overlay.st-jets-frost {
+    backdrop-filter: blur(14px) saturate(1.2);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2);
 }
 
 #st-jets-modal {
@@ -586,9 +591,9 @@
     overflow: hidden;
     border: 1px solid rgba(255, 255, 255, 0.16);
     background: linear-gradient(168deg,
-        rgba(28, 32, 64, 0.72) 0%,
-        rgba(18, 22, 50, 0.66) 46%,
-        rgba(34, 26, 64, 0.72) 100%);
+        rgba(28, 32, 64, 0.93) 0%,
+        rgba(18, 22, 50, 0.90) 46%,
+        rgba(34, 26, 64, 0.93) 100%);
     backdrop-filter: blur(24px) saturate(1.5);
     -webkit-backdrop-filter: blur(24px) saturate(1.5);
     box-shadow:
@@ -603,11 +608,9 @@
     z-index: 1;
 }
 
-/* 遮罩微微透出页面：与默认主题同强度磨砂，星云色调靠底色带出 */
+/* 遮罩微微透出页面：磨砂由 .st-jets-frost 统一提供，这里只管星云底色 */
 #st-jets-container.st-jets-theme-galaxy #st-jets-overlay {
     background: rgba(5, 7, 18, 0.5);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
 }
 
 /* 星云：低饱和紫 / 蓝 / 粉 / 青，超大模糊 + 慢速位移旋转 = 液态流动感 */
